@@ -23,7 +23,7 @@ async function request(path, options = {}) {
     // No backend configured
     return null;
   }
-  const url = `${base.replace(/\/+$/, "")}/${String(path).replace(/^\/+/, "")}`;
+  const url = `${base.replace(/\/+$/, "")}/${String(path).replace(/^\//, "")}`;
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
@@ -58,7 +58,15 @@ export const api = {
   /** Create a new todo. Returns created todo or null if backend not configured. */
   async createTodo(todo) {
     try {
-      return await request("/todos", { method: "POST", body: JSON.stringify(todo) });
+      const demoUser = typeof localStorage !== 'undefined' ? localStorage.getItem('demo_user_email') : null;
+      const payload = {
+        ...todo,
+        owner: demoUser || todo.owner || (process.env.REACT_APP_USER_EMAIL || 'me'),
+        assignees: Array.isArray(todo.assignees) ? todo.assignees : [],
+        sharedWith: Array.isArray(todo.sharedWith) ? todo.sharedWith : [],
+        updatedAt: todo.updatedAt || new Date().toISOString(),
+      };
+      return await request("/todos", { method: "POST", body: JSON.stringify(payload) });
     } catch (e) {
       console.warn("API createTodo failed; falling back to local:", e);
       return null;
@@ -67,7 +75,11 @@ export const api = {
   /** Update an existing todo. Returns updated todo or null if backend not configured. */
   async updateTodo(id, updates) {
     try {
-      return await request(`/todos/${id}`, { method: "PUT", body: JSON.stringify(updates) });
+      const payload = {
+        ...updates,
+        updatedAt: updates.updatedAt || new Date().toISOString(),
+      };
+      return await request(`/todos/${id}`, { method: "PUT", body: JSON.stringify(payload) });
     } catch (e) {
       console.warn("API updateTodo failed; falling back to local:", e);
       return null;

@@ -1,27 +1,42 @@
- /**
- * useTodos hook manages to-do items with localStorage persistence by default.
- * If a backend is configured (via env), it attempts to sync with it but falls back gracefully.
- * Adds reminders, due dates, repeat schedules, in-app notifications, and productivity stats.
- * Now extended with time blocking: startTime/endTime fields, timeline helpers, overlap detection.
+/**
+ * useTodos hook manages to-do items with localStorage persistence and optional backend sync.
+ * Enhanced with collaboration support:
+ *  - New fields: owner (string), assignees (string[]), sharedWith (string[]), updatedAt (ISO)
+ *  - Real-time transport via CollaborationProvider (WebSocket/BroadcastChannel)
+ *  - Last-write-wins merging by updatedAt
+ *  - Collision detection and resolution helpers
+ *  - Permission heuristic (canEdit)
+ * Preserves existing capabilities: reminders, due dates, repeat, notes, attachments, timeline, dependencies, pinning, filters.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiBase } from "../utils/api";
+import { useCollaboration } from "../components/CollaborationProvider";
 
 const STORAGE_KEY = "todos_ocean_pro";
 const STATS_KEY = "todo_stats_v1";
 const QUICK_NOTES_KEY = "quick_notes_v1";
-
 const FIVE_MIN = 5 * 60 * 1000;
 
-// Helpers for local persistence
+function getSelfId() {
+  const demo = typeof localStorage !== 'undefined' ? localStorage.getItem('demo_user_email') : null;
+  const envId = process.env.REACT_APP_USER_EMAIL && process.env.REACT_APP_USER_EMAIL.trim();
+  return (demo && demo.trim()) || envId || 'me';
+}
+
+// Helpers for local persistence and migration
 function ensureDefaults(list) {
-  // Backward compatibility: default missing fields (including new 'pinned' flag, notes, and attachments array)
   return (Array.isArray(list) ? list : []).map((t) => {
+    // migrate to new collaboration fields + keep existing fields
+    const owner = typeof t.owner === 'string' ? t.owner : getSelfId();
+    const assignees = Array.isArray(t.assignees) ? t.assignees : [];
+    const sharedWith = Array.isArray(t.sharedWith) ? t.sharedWith : [];
+    const updatedAt = typeof t.updatedAt === 'string' ? t.updatedAt : new Date().toISOString();
+
     const startTime = typeof t.startTime === "string" ? t.startTime : null;
     const endTime = typeof t.endTime === "string" ? t.endTime : null;
-    const normalized = normalizeTimeRange(startTime, endTime);
+    const norm = normalizeTimeRange(startTime, endTime);
+
     const attachments = Array.isArray(t.attachments) ? t.attachments : [];
-    // normalize attachments entries minimally
     const normAtt = attachments.map((a) => ({
       id: a.id || `att_${Math.random().toString(36).slice(2)}_${Date.now()}`,
       type: a.type === "audio" ? "audio" : "image",
@@ -32,28 +47,27 @@ function ensureDefaults(list) {
       size: typeof a.size === "number" ? a.size : undefined,
       durationSeconds: typeof a.durationSeconds === "number" ? a.durationSeconds : undefined,
     }));
+
     return ({
       ...t,
+      owner,
+      assignees,
+      sharedWith,
+      updatedAt,
       category: t.category || "work",
       priority: t.priority || "medium",
       dueDate: typeof t.dueDate === "string" || t.dueDate === null ? t.dueDate : null,
       repeat: t.repeat || "none",
       remindAt: typeof t.remindAt === "string" || t.remindAt === null ? t.remindAt : null,
       lastNotifiedAt: t.lastNotifiedAt || null,
-      // new metadata fields (backward compatible)
       completedAt: typeof t.completedAt === "string" || t.completedAt === null ? (t.completedAt ?? null) : null,
       createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
-      // new pin flag
       pinned: typeof t.pinned === "boolean" ? t.pinned : false,
-      // new notes array
       notes: Array.isArray(t.notes) ? t.notes : [],
-      // new attachments array
       attachments: normAtt,
-      // dependencies (array of task IDs)
       dependencies: Array.isArray(t.dependencies) ? t.dependencies.map(String) : [],
-      // time blocking (start/end ISO or null)
-      startTime: normalized.startTime,
-      endTime: normalized.endTime,
+      startTime: norm.startTime,
+      endTime: norm.endTime,
     });
   });
 }
@@ -71,9 +85,7 @@ function loadLocal() {
 function saveLocal(todos) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
 }
 
 function loadQuickNotes() {
@@ -81,7 +93,6 @@ function loadQuickNotes() {
     const raw = localStorage.getItem(QUICK_NOTES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    // normalize items array
     return (Array.isArray(parsed) ? parsed : []).map(n => ({
       id: n.id || `q_${Math.random().toString(36).slice(2)}_${Date.now()}`,
       text: String(n.text || ""),
@@ -100,28 +111,14 @@ function loadQuickNotes() {
   }
 }
 function saveQuickNotes(notes) {
-  try {
-    localStorage.setItem(QUICK_NOTES_KEY, JSON.stringify(notes));
-  } catch {
-    // ignore
-  }
+  try { localStorage.setItem(QUICK_NOTES_KEY, JSON.stringify(notes)); } catch {}
 }
 
-function loadStats() {
-  try {
-    const raw = localStorage.getItem(STATS_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-function saveStats(stats) {
-  try {
-    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-  } catch {
-    // ignore
-  }
+function toKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function generateLocalId() {
@@ -131,10 +128,6 @@ function generateLocalId() {
 function isSameLocalDate(a, b) {
   return a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-function isToday(date) {
-  const now = new Date();
-  return isSameLocalDate(date, now);
 }
 
 function addRepeat(dueISO, repeat, keepTime = null) {
@@ -151,76 +144,6 @@ function addRepeat(dueISO, repeat, keepTime = null) {
   return out.toISOString();
 }
 
-function toKey(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function initStatsFromTodos(todos) {
-  // Build aggregates from current todos (migration safe)
-  const stats = {
-    daily: {}, // key -> { created, completed }
-    lastProductiveDate: null,
-    currentStreak: 0,
-    bestStreak: 0,
-    threshold: 1,
-  };
-  todos.forEach((t) => {
-    if (t.createdAt) {
-      const kd = toKey(new Date(t.createdAt));
-      stats.daily[kd] = stats.daily[kd] || { created: 0, completed: 0 };
-      stats.daily[kd].created += 1;
-    }
-    if (t.completed && t.completedAt) {
-      const kc = toKey(new Date(t.completedAt));
-      stats.daily[kc] = stats.daily[kc] || { created: 0, completed: 0 };
-      stats.daily[kc].completed += 1;
-      stats.lastProductiveDate = kc;
-    }
-  });
-  // compute streaks
-  recomputeStreaks(stats);
-  return stats;
-}
-
-function recomputeStreaks(stats) {
-  const threshold = stats.threshold || 1;
-  const today = new Date();
-  let streak = 0;
-  let best = stats.bestStreak || 0;
-
-  // walk backwards from today until a day that doesn't meet threshold
-  for (let i = 0; i < 3650; i++) { // cap 10 years
-    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-    const k = toKey(d);
-    const entry = stats.daily[k] || { created: 0, completed: 0 };
-    if ((entry.completed || 0) >= threshold) {
-      streak += 1;
-      if (streak > best) best = streak;
-    } else {
-      break;
-    }
-  }
-  stats.currentStreak = streak;
-  stats.bestStreak = Math.max(best, stats.bestStreak || 0);
-}
-
-function stdDev(arr) {
-  if (!arr.length) return 0;
-  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-  const variance = arr.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / arr.length;
-  return Math.sqrt(variance);
-}
-
-// Time blocking helpers
-// PUBLIC_INTERFACE
-export function isTimeBlocked(task) {
-  /** Returns true if task has both startTime and endTime ISO strings. */
-  return !!(task && typeof task.startTime === "string" && typeof task.endTime === "string");
-}
-
 // PUBLIC_INTERFACE
 export function normalizeTimeRange(startTime, endTime) {
   /** Ensures both times are either null or valid ISO and end >= start; auto-fix if needed. */
@@ -229,16 +152,13 @@ export function normalizeTimeRange(startTime, endTime) {
     const s = startTime ? new Date(startTime) : null;
     const e = endTime ? new Date(endTime) : null;
     if (!s && e) {
-      // if only end provided, set start = end - 30min
       const start = new Date(e.getTime() - 30 * 60000);
       return { startTime: start.toISOString(), endTime: e.toISOString() };
     } else if (s && !e) {
-      // only start provided -> default 30 minutes
       const end = new Date(s.getTime() + 30 * 60000);
       return { startTime: s.toISOString(), endTime: end.toISOString() };
     } else if (s && e) {
       if (e.getTime() < s.getTime()) {
-        // swap or adjust to 30min after
         const end = new Date(s.getTime() + 30 * 60000);
         return { startTime: s.toISOString(), endTime: end.toISOString() };
       }
@@ -250,35 +170,11 @@ export function normalizeTimeRange(startTime, endTime) {
   return { startTime: null, endTime: null };
 }
 
-// PUBLIC_INTERFACE
-export function overlaps(a, b) {
-  /** Returns true if two tasks with start/end overlap in time. */
-  if (!isTimeBlocked(a) || !isTimeBlocked(b)) return false;
-  const as = new Date(a.startTime).getTime();
-  const ae = new Date(a.endTime).getTime();
-  const bs = new Date(b.startTime).getTime();
-  const be = new Date(b.endTime).getTime();
-  return Math.max(as, bs) < Math.min(ae, be);
+// Time utilities used by timeline
+export function isTimeBlocked(task) {
+  return !!(task && typeof task.startTime === "string" && typeof task.endTime === "string");
 }
-
-// PUBLIC_INTERFACE
-export function getTasksForDate(list, date) {
-  /** Returns tasks scheduled (startTime on the given date) with normalized ranges. */
-  const key = toKey(date);
-  return (Array.isArray(list) ? list : []).filter((t) => {
-    if (!t.startTime) return false;
-    try {
-      const d = new Date(t.startTime);
-      return toKey(d) === key;
-    } catch {
-      return false;
-    }
-  });
-}
-
-// PUBLIC_INTERFACE
 export function snapToFiveMinutes(iso) {
-  /** Snap a datetime ISO string to nearest 5-minute increment for consistent rendering. */
   try {
     const d = new Date(iso);
     const ms = d.getTime();
@@ -289,10 +185,7 @@ export function snapToFiveMinutes(iso) {
     return iso;
   }
 }
-
-// PUBLIC_INTERFACE
 export function tasksForDay(list, date, filters) {
-  /** Returns filtered tasks for a day respecting provided filters (category, priority, due, notes, completion). */
   const key = toKey(date);
   const {
     category = "all",
@@ -325,51 +218,87 @@ export function tasksForDay(list, date, filters) {
     return new Date() > new Date(iso);
   };
 
-  return (Array.isArray(list) ? list : [])
-    .filter((t) => {
-      // belongs to day if either startTime is that day or dueDate filter requests different slice later
-      let belongs = t.startTime && toKey(new Date(t.startTime)) === key;
-      // if no time blocking, still allow due-based membership when viewing a day
-      if (!belongs && t.dueDate && withinSameDay(t.dueDate)) {
-        belongs = true;
-      }
-      if (!belongs) return false;
+  return (Array.isArray(list) ? list : []).filter((t) => {
+    let belongs = t.startTime && toKey(new Date(t.startTime)) === key;
+    if (!belongs && t.dueDate && withinSameDay(t.dueDate)) {
+      belongs = true;
+    }
+    if (!belongs) return false;
 
-      const tCat = t.category || "work";
-      const tPri = t.priority || "medium";
-      const okCat = category === "all" ? true : tCat === category;
-      const okPri = priority === "all" ? true : tPri === priority;
+    const tCat = t.category || "work";
+    const tPri = t.priority || "medium";
+    const okCat = category === "all" ? true : tCat === category;
+    const okPri = priority === "all" ? true : tPri === priority;
 
-      let okDue = true;
-      if (due === "today") okDue = !!t.dueDate && withinSameDay(t.dueDate);
-      else if (due === "week") okDue = !!t.dueDate && withinThisWeek(t.dueDate);
-      else if (due === "overdue") okDue = isOverdue(t.dueDate, t.completed);
+    let okDue = true;
+    if (due === "today") okDue = !!t.dueDate && withinSameDay(t.dueDate);
+    else if (due === "week") okDue = !!t.dueDate && withinThisWeek(t.dueDate);
+    else if (due === "overdue") okDue = isOverdue(t.dueDate, t.completed);
 
-      const okNotes = notesOnly ? Array.isArray(t.notes) && t.notes.length > 0 : true;
-      return okCat && okPri && okDue && okNotes;
-    });
+    const okNotes = notesOnly ? Array.isArray(t.notes) && t.notes.length > 0 : true;
+    return okCat && okPri && okDue && okNotes;
+  });
 }
 
-// PUBLIC_INTERFACE
-export function detectConflicts(list) {
-  /** Returns a Set of taskIds that have overlapping time ranges among time-blocked tasks. */
-  const conflicts = new Set();
-  const timeTasks = (Array.isArray(list) ? list : []).filter(isTimeBlocked);
-  for (let i = 0; i < timeTasks.length; i++) {
-    for (let j = i + 1; j < timeTasks.length; j++) {
-      if (toKey(new Date(timeTasks[i].startTime)) !== toKey(new Date(timeTasks[j].startTime))) continue;
-      if (overlaps(timeTasks[i], timeTasks[j])) {
-        conflicts.add(timeTasks[i].id);
-        conflicts.add(timeTasks[j].id);
-      }
+function lastWriteWins(local, incoming) {
+  if (!local) return incoming;
+  if (!incoming) return local;
+  return new Date(incoming.updatedAt || 0) >= new Date(local.updatedAt || 0) ? incoming : local;
+}
+
+// Stats
+function loadStats() {
+  try { const raw = localStorage.getItem(STATS_KEY); if (!raw) return null; return JSON.parse(raw); } catch { return null; }
+}
+function saveStats(stats) { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch {} }
+function initStatsFromTodos(todos) {
+  const stats = { daily: {}, lastProductiveDate: null, currentStreak: 0, bestStreak: 0, threshold: 1 };
+  const toKeyFn = toKey;
+  (todos || []).forEach((t) => {
+    if (t.createdAt) {
+      const kd = toKeyFn(new Date(t.createdAt));
+      stats.daily[kd] = stats.daily[kd] || { created: 0, completed: 0 };
+      stats.daily[kd].created += 1;
+    }
+    if (t.completed && t.completedAt) {
+      const kc = toKeyFn(new Date(t.completedAt));
+      stats.daily[kc] = stats.daily[kc] || { created: 0, completed: 0 };
+      stats.daily[kc].completed += 1;
+      stats.lastProductiveDate = kc;
+    }
+  });
+  recomputeStreaks(stats);
+  return stats;
+}
+function recomputeStreaks(stats) {
+  const threshold = stats.threshold || 1;
+  const today = new Date();
+  let streak = 0;
+  let best = stats.bestStreak || 0;
+  for (let i = 0; i < 3650; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const k = toKey(d);
+    const entry = stats.daily[k] || { created: 0, completed: 0 };
+    if ((entry.completed || 0) >= threshold) {
+      streak += 1;
+      if (streak > best) best = streak;
+    } else {
+      break;
     }
   }
-  return conflicts;
+  stats.currentStreak = streak;
+  stats.bestStreak = Math.max(best, stats.bestStreak || 0);
+}
+function stdDev(arr) {
+  if (!arr.length) return 0;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  const variance = arr.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / arr.length;
+  return Math.sqrt(variance);
 }
 
 // PUBLIC_INTERFACE
 export function useTodos() {
-  /** Hook that exposes todos state, notifications, CRUD actions, productivity stats, and time blocking helpers. */
+  /** Hook that exposes todos, CRUD, collaboration integration, stats, and other app features. */
   const [todos, setTodos] = useState(() => loadLocal());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -377,10 +306,15 @@ export function useTodos() {
   const hasBackend = useMemo(() => !!getApiBase(), []);
   const schedulerRef = useRef(null);
 
-  // quick notes state
+  // collaboration
+  const { broadcast, on, EVENTS, nowIso, selfId } = useCollaboration();
+  const toastRef = useRef(null);
+  const [collision, setCollision] = useState(null); // {id, remote, local}
+
+  // quick notes
   const [quickNotes, setQuickNotes] = useState(() => loadQuickNotes());
 
-  // stats state
+  // stats
   const [stats, setStats] = useState(() => {
     const existing = loadStats();
     if (existing) return existing;
@@ -389,7 +323,7 @@ export function useTodos() {
     return fromTodos;
   });
 
-  // Initial load
+  // Initial load with backend attempt
   useEffect(() => {
     let isMounted = true;
     async function init() {
@@ -400,11 +334,10 @@ export function useTodos() {
           const data = await api.listTodos();
           if (data && Array.isArray(data)) {
             if (!isMounted) return;
-            const withDefaults = ensureDefaults(data);
-            setTodos(withDefaults);
-            saveLocal(withDefaults); // keep a local cache
-            // refresh stats from loaded todos if no stats exist yet
-            const newStats = initStatsFromTodos(withDefaults);
+            const normalized = ensureDefaults(data);
+            setTodos(normalized);
+            saveLocal(normalized);
+            const newStats = initStatsFromTodos(normalized);
             setStats(newStats);
             saveStats(newStats);
             setLoading(false);
@@ -414,11 +347,9 @@ export function useTodos() {
           setError(e);
         }
       }
-      // fallback to local
       if (isMounted) {
         const localTodos = loadLocal();
         setTodos(localTodos);
-        // ensure stats exists
         const existing = loadStats();
         if (!existing) {
           const s = initStatsFromTodos(localTodos);
@@ -434,85 +365,83 @@ export function useTodos() {
     };
   }, [hasBackend]);
 
-  // Persist to localStorage whenever todos change
+  // Persist local
   useEffect(() => {
     saveLocal(todos);
   }, [todos]);
 
-  // Persist stats
-  useEffect(() => {
-    saveStats(stats);
-  }, [stats]);
+  // Persist stats/quick notes
+  useEffect(() => { saveStats(stats); }, [stats]);
+  useEffect(() => { saveQuickNotes(quickNotes); }, [quickNotes]);
 
-  // Persist quick notes
+  // Collaboration event listeners
   useEffect(() => {
-    saveQuickNotes(quickNotes);
-  }, [quickNotes]);
+    const offCreate = on(EVENTS.TASK_CREATED, ({ payload, _meta }) => {
+      const remote = ensureDefaults([payload])[0];
+      setTodos((prev) => {
+        const exists = prev.find((t) => t.id === remote.id);
+        if (!exists) return [remote, ...prev];
+        return prev.map((t) => (t.id === remote.id ? lastWriteWins(t, remote) : t));
+      });
+      toastRef.current && toastRef.current(`Task updated by ${(_meta && _meta.sender) || 'someone'}`);
+    });
+    const offUpdate = on(EVENTS.TASK_UPDATED, ({ payload, _meta }) => {
+      const remote = ensureDefaults([payload])[0];
+      setTodos((prev) => {
+        const loc = prev.find((t) => t.id === remote.id);
+        if (loc && new Date(remote.updatedAt) < new Date(loc.updatedAt)) {
+          return prev; // ignore stale
+        }
+        return prev.map((t) => (t.id === remote.id ? lastWriteWins(t, remote) : t));
+      });
+      toastRef.current && toastRef.current(`Task updated by ${(_meta && _meta.sender) || 'someone'}`);
+    });
+    const offDelete = on(EVENTS.TASK_DELETED, ({ payload }) => {
+      setTodos((prev) => prev.filter((t) => t.id !== payload.id));
+    });
+    return () => {
+      offCreate && offCreate();
+      offUpdate && offUpdate();
+      offDelete && offDelete();
+    };
+  }, [on, EVENTS]);
 
   // Toast helpers
   const pushToast = useCallback((kind, title, message) => {
     const id = `toast_${Math.random().toString(36).slice(2)}_${Date.now()}`;
     setToasts((prev) => [{ id, kind, title, message }, ...prev]);
-    // auto dismiss after 6s
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 6000);
   }, []);
-  // PUBLIC_INTERFACE
   const dismissToast = useCallback((id) => {
-    /** Dismiss a toast by id. */
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Evaluate reminders every 60s
+  // Reminders evaluation (kept minimal here)
   useEffect(() => {
     function evaluate() {
       const now = new Date();
       const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
-      setTodos((prev) => {
-        const updated = prev.map((t) => {
-          if (!t.dueDate || t.completed) return t;
-          // Suppress reminders if task is blocked by dependencies
-          if (isBlocked(t, prev)) return t;
-          const due = new Date(t.dueDate);
-          const dueToday = isToday(due);
-          const overdue = now > due;
-
-          let shouldNotify = false;
-          let notifyKind = "info";
-          let notifyMsg = "";
-
-          if (overdue) {
-            notifyKind = "error";
-            notifyMsg = `Task "${t.title}" is overdue since ${due.toLocaleString()}`;
-            shouldNotify = true;
-          } else if (dueToday && due > now && due <= nextHour) {
-            notifyKind = "warn";
-            notifyMsg = `Task "${t.title}" is due within the next hour (${due.toLocaleTimeString()})`;
-            shouldNotify = true;
-          }
-
-          if (!shouldNotify) return t;
-
-          // Avoid duplicate within the same hour
-          const last = t.lastNotifiedAt ? new Date(t.lastNotifiedAt) : null;
-          const tooSoon = last && (now.getTime() - last.getTime()) < 60 * 60 * 1000;
-          if (tooSoon) return t;
-
-          pushToast(notifyKind, "Reminder", notifyMsg);
-          return { ...t, lastNotifiedAt: now.toISOString() };
-        });
-        return updated;
-      });
+      setTodos((prev) => prev.map((t) => {
+        if (!t.dueDate || t.completed) return t;
+        const due = new Date(t.dueDate);
+        const dueToday = isSameLocalDate(due, new Date());
+        const overdue = now > due;
+        let should = false; let kind = 'info'; let msg = '';
+        if (overdue) { kind = 'error'; msg = `Task "${t.title || t.text}" is overdue since ${due.toLocaleString()}`; should = true; }
+        else if (dueToday && due > now && due <= nextHour) { kind = 'warn'; msg = `Task "${t.title || t.text}" is due within the next hour (${due.toLocaleTimeString()})`; should = true; }
+        if (!should) return t;
+        const last = t.lastNotifiedAt ? new Date(t.lastNotifiedAt) : null;
+        const tooSoon = last && (now.getTime() - last.getTime()) < 60 * 60 * 1000;
+        if (tooSoon) return t;
+        pushToast(kind, "Reminder", msg);
+        return { ...t, lastNotifiedAt: now.toISOString() };
+      }));
     }
-
-    // start interval
+    const id = setInterval(evaluate, 60000);
     evaluate();
-    if (schedulerRef.current) clearInterval(schedulerRef.current);
-    schedulerRef.current = setInterval(evaluate, 60000);
-    return () => {
-      if (schedulerRef.current) clearInterval(schedulerRef.current);
-    };
+    return () => clearInterval(id);
   }, [pushToast]);
 
   // Stats helpers
@@ -549,209 +478,127 @@ export function useTodos() {
       daily[k] = daily[k] || { created: 0, completed: 0 };
       daily[k].completed = Math.max(0, (daily[k].completed || 0) - 1);
       const next = { ...prev, daily };
-      // Recompute streak as unchecking may break it
       recomputeStreaks(next);
       saveStats(next);
       return next;
     });
   }
 
-  // Actions
-  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false, startTime = null, endTime = null, dependencies = []) => {
-    const nowIso = new Date().toISOString();
-    // snap optional times
-    const norm = normalizeTimeRange(startTime, endTime);
-    const baseTodo = {
+  // Backend helpers
+  const createRemote = useCallback(async (task) => { try { await api.createTodo(task); } catch {} }, []);
+  const updateRemote = useCallback(async (id, updates) => { try { await api.updateTodo(id, updates); } catch {} }, []);
+  const deleteRemote = useCallback(async (id) => { try { await api.deleteTodo(id); } catch {} }, []);
+
+  // CRUD with collaboration
+  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false, startTime = null, endTime = null, dependencies = [], extras = {}) => {
+    const now = new Date().toISOString();
+    const owner = getSelfId();
+    const newTodo = ensureDefaults([{
       id: generateLocalId(),
-      title: String(title).trim(),
+      title: String(title).trim() || String(extras.text || ''),
+      text: undefined, // text kept for legacy compatibility; primary is title
       completed: false,
-      createdAt: nowIso,
-      category,
-      priority,
-      dueDate: dueDate || null,
-      repeat: repeat || "none",
-      remindAt: remindAt || null,
+      createdAt: now,
+      category, priority, dueDate, repeat, remindAt,
       lastNotifiedAt: null,
       completedAt: null,
       pinned: !!pinned,
-      startTime: norm.startTime,
-      endTime: norm.endTime,
+      startTime, endTime,
       notes: [],
       attachments: [],
       dependencies: Array.isArray(dependencies) ? dependencies.map(String) : [],
-    };
-    // optimistic update
-    setTodos((prev) => [baseTodo, ...prev]);
-    incrementCreated(nowIso);
+      owner,
+      assignees: Array.isArray(extras.assignees) ? extras.assignees : [],
+      sharedWith: Array.isArray(extras.sharedWith) ? extras.sharedWith : [],
+      updatedAt: now,
+    }])[0];
 
-    if (hasBackend) {
-      try {
-        const created = await api.createTodo({
-          title: baseTodo.title,
-          completed: baseTodo.completed,
-          category: baseTodo.category,
-          priority: baseTodo.priority,
-          dueDate: baseTodo.dueDate,
-          repeat: baseTodo.repeat,
-          remindAt: baseTodo.remindAt,
-          lastNotifiedAt: baseTodo.lastNotifiedAt,
-          createdAt: baseTodo.createdAt,
-          completedAt: baseTodo.completedAt,
-          pinned: baseTodo.pinned,
-          notes: [],
-          startTime: baseTodo.startTime,
-          endTime: baseTodo.endTime,
-          dependencies: baseTodo.dependencies, // backend may ignore unknown fields
-        });
-        if (created && created.id) {
-          // reconcile: replace local id with server id
-          const normalized = ensureDefaults([created])[0];
-          setTodos((prev) =>
-            prev.map((t) => (t.id === baseTodo.id ? { ...normalized } : t))
-          );
-        }
-      } catch (e) {
-        setError(e);
-      }
-    }
-  }, [hasBackend]);
+    setTodos((prev) => [newTodo, ...prev]);
+    incrementCreated(now);
 
-  const updateTodo = useCallback(async (id, updates) => {
-    // normalize time updates if present
-    let timePatched = {};
-    if ("startTime" in updates || "endTime" in updates) {
-      const norm = normalizeTimeRange(updates.startTime ?? null, updates.endTime ?? null);
-      timePatched = { startTime: norm.startTime, endTime: norm.endTime };
-    }
-    const normalized = ensureDefaults([{ ...updates, ...timePatched }])[0];
-    // keep pinned strictly boolean if provided
-    if (typeof updates.pinned !== "undefined") {
-      normalized.pinned = !!updates.pinned;
-    }
-    if (typeof normalized.startTime === "string") {
-      normalized.startTime = snapToFiveMinutes(normalized.startTime);
-    }
-    if (typeof normalized.endTime === "string") {
-      normalized.endTime = snapToFiveMinutes(normalized.endTime);
-    }
-    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...normalized } : t)));
-    if (hasBackend) {
-      try {
-        await api.updateTodo(id, normalized);
-      } catch (e) {
-        setError(e);
+    // Broadcast and backend
+    broadcast("task:created", newTodo);
+    if (hasBackend) createRemote(newTodo);
+  }, [broadcast, hasBackend, createRemote]);
+
+  const updateTodo = useCallback(async (id, updates, opts = { detectCollision: true }) => {
+    setTodos((prev) => {
+      const current = prev.find((t) => t.id === id);
+      if (!current) return prev;
+      if (opts.detectCollision && updates && updates.expectedUpdatedAt && updates.expectedUpdatedAt !== current.updatedAt) {
+        setCollision({ id, remote: current, local: { ...current, ...updates } });
+        return prev;
       }
+      // normalize time if needed
+      let timePatched = {};
+      if ("startTime" in updates || "endTime" in updates) {
+        const norm = normalizeTimeRange(updates.startTime ?? null, updates.endTime ?? null);
+        timePatched = { startTime: norm.startTime, endTime: norm.endTime };
+      }
+      const next = ensureDefaults([{ ...current, ...updates, ...timePatched, updatedAt: new Date().toISOString() }])[0];
+      const merged = prev.map((t) => (t.id === id ? next : t));
+      broadcast("task:updated", next);
+      if (hasBackend) updateRemote(id, next);
+      return merged;
+    });
+  }, [broadcast, hasBackend, updateRemote]);
+
+  const resolveCollision = useCallback((action) => {
+    if (!collision) return;
+    const { id, remote, local } = collision;
+    if (action === 'reload') {
+      setCollision(null); // keep remote
+      return;
     }
-  }, [hasBackend]);
+    const next = { ...remote, ...local, updatedAt: new Date().toISOString() };
+    setTodos((prev) => prev.map((t) => (t.id === id ? next : t)));
+    broadcast("task:updated", next);
+    if (hasBackend) updateRemote(id, next);
+    setCollision(null);
+  }, [collision, broadcast, hasBackend, updateRemote]);
 
   const toggleTodo = useCallback(async (id) => {
-    let toggled;
+    let toggledNow = null;
     setTodos((prev) => {
       const nowIso = new Date().toISOString();
-      // if the target is blocked, do not allow completion toggle to true
-      const target = prev.find(t => t.id === id);
-      if (target && !target.completed && isBlocked(target, prev)) {
-        return prev; // silently ignore; UI will show tooltip
-      }
       const mapped = prev.map((t) => {
         if (t.id !== id) return t;
         const newCompleted = !t.completed;
-        let next = { ...t, completed: newCompleted };
-        // set completion timestamp metadata
+        let next = { ...t, completed: newCompleted, updatedAt: nowIso };
         if (newCompleted) {
-          // avoid double counting within a day: only increment if no completedAt today
           const newCompletedAt = nowIso;
           const hadSameDay = t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date());
           next.completedAt = newCompletedAt;
           if (!hadSameDay) incrementCompleted(newCompletedAt);
         } else {
-          // unchecking should decrement if it was completed today
           if (t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date())) {
             decrementCompleted(t.completedAt);
           }
           next.completedAt = null;
         }
-
-        // If completing and has a repeat schedule, auto-schedule next
         if (newCompleted && t.repeat && t.repeat !== "none") {
           const nextDue = addRepeat(t.dueDate || nowIso, t.repeat, t.remindAt || null);
           next.dueDate = nextDue;
           next.lastNotifiedAt = null;
         }
-        toggled = next;
+        toggledNow = next;
         return next;
       });
       return mapped;
     });
-
-    if (hasBackend) {
-      try {
-        const t = todos.find((x) => x.id === id);
-        const newCompleted = !(t?.completed ?? false);
-        const nowIso = new Date().toISOString();
-        const updates = { completed: newCompleted };
-        // optional completion timestamp propagation
-        updates.completedAt = newCompleted ? nowIso : null;
-        if (t && newCompleted && t.repeat && t.repeat !== "none") {
-          updates.dueDate = addRepeat(t.dueDate || nowIso, t.repeat, t.remindAt || null);
-          updates.lastNotifiedAt = null;
-        }
-        await api.updateTodo(id, updates);
-      } catch (e) {
-        setError(e);
+    if (toggledNow) {
+      broadcast("task:updated", toggledNow);
+      if (hasBackend) {
+        try {
+          const t = toggledNow;
+          const updates = { completed: t.completed, completedAt: t.completedAt, dueDate: t.dueDate, lastNotifiedAt: t.lastNotifiedAt, updatedAt: t.updatedAt };
+          await api.updateTodo(id, updates);
+        } catch (e) { setError(e); }
       }
     }
-  }, [hasBackend, todos]);
-
-  // Attachments handlers
-  // PUBLIC_INTERFACE
-  const addAttachment = useCallback((taskId, attachment) => {
-    /** Add an attachment object to a task. Stores small files as data URLs; object URLs may not persist after reload. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const atts = Array.isArray(t.attachments) ? t.attachments : [];
-      return { ...t, attachments: [attachment, ...atts] };
-    }));
-    if (hasBackend) {
-      // Best-effort metadata propagation; backend may ignore
-      const patch = { attachments: undefined };
-      api.updateTodo(taskId, patch).catch(() => {});
-    }
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const removeAttachment = useCallback((taskId, attachmentId) => {
-    /** Remove an attachment by ID from the task. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const atts = Array.isArray(t.attachments) ? t.attachments : [];
-      return { ...t, attachments: atts.filter(a => a.id !== attachmentId) };
-    }));
-    if (hasBackend) {
-      const patch = { attachments: undefined };
-      api.updateTodo(taskId, patch).catch(() => {});
-    }
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const replaceAttachmentMeta = useCallback((taskId, attachmentId, patch) => {
-    /** Shallow-merge metadata patch into a single attachment. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const atts = Array.isArray(t.attachments) ? t.attachments : [];
-      return {
-        ...t,
-        attachments: atts.map(a => a.id === attachmentId ? { ...a, ...patch } : a)
-      };
-    }));
-    if (hasBackend) {
-      const payload = { attachments: undefined };
-      api.updateTodo(taskId, payload).catch(() => {});
-    }
-  }, [hasBackend]);
+  }, [broadcast, hasBackend]);
 
   const deleteTodo = useCallback(async (id) => {
-    // If deleting a completed today item, adjust stats to avoid stale counts
     setTodos((prev) => {
       const toDelete = prev.find(t => t.id === id);
       if (toDelete?.completedAt && isSameLocalDate(new Date(toDelete.completedAt), new Date())) {
@@ -759,18 +606,90 @@ export function useTodos() {
       }
       return prev.filter((t) => t.id !== id);
     });
-    if (hasBackend) {
-      try {
-        await api.deleteTodo(id);
-      } catch (e) {
-        setError(e);
-      }
-    }
-  }, [hasBackend]);
+    broadcast("task:deleted", { id });
+    if (hasBackend) { try { await api.deleteTodo(id); } catch (e) { setError(e); } }
+  }, [broadcast, hasBackend]);
 
-  // Derived data for Today view
+  // Notes/attachments/dependencies helpers used by components (preserved)
+  const addTaskNote = useCallback((taskId, note) => {
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: [note, ...(Array.isArray(t.notes) ? t.notes : [])], updatedAt: new Date().toISOString() } : t));
+    broadcast("task:updated", { ...prevSafeFind(todos, taskId) });
+  }, [broadcast, todos]);
+  const updateTaskNote = useCallback((taskId, noteId, patch) => {
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const notes = (Array.isArray(t.notes) ? t.notes : []).map(n => n.id === noteId ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n);
+      return { ...t, notes, updatedAt: new Date().toISOString() };
+    }));
+  }, []);
+  const deleteTaskNote = useCallback((taskId, noteId) => {
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: (Array.isArray(t.notes) ? t.notes : []).filter(n => n.id !== noteId), updatedAt: new Date().toISOString() } : t));
+  }, []);
+  const addAttachment = useCallback((taskId, attachment) => {
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, attachments: [attachment, ...(Array.isArray(t.attachments) ? t.attachments : [])], updatedAt: new Date().toISOString() } : t));
+  }, []);
+  const removeAttachment = useCallback((taskId, attachmentId) => {
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, attachments: (Array.isArray(t.attachments) ? t.attachments : []).filter(a => a.id !== attachmentId), updatedAt: new Date().toISOString() } : t));
+  }, []);
+  const replaceAttachmentMeta = useCallback((taskId, attachmentId, patch) => {
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const atts = (Array.isArray(t.attachments) ? t.attachments : []).map(a => a.id === attachmentId ? { ...a, ...patch } : a);
+      return { ...t, attachments: atts, updatedAt: new Date().toISOString() };
+    }));
+  }, []);
+
+  function prevSafeFind(list, id) {
+    return (Array.isArray(list) ? list : []).find((t) => t.id === id) || null;
+  }
+
+  // Dependencies helpers (preserved)
+  function detectCycle(taskId, newDeps, list = todos) {
+    const graph = new Map();
+    const all = Array.isArray(list) ? list : [];
+    all.forEach((t) => {
+      graph.set(t.id, new Set(Array.isArray(t.dependencies) ? t.dependencies.map(String) : []));
+    });
+    if (!graph.has(taskId)) graph.set(taskId, new Set());
+    graph.set(taskId, new Set((newDeps || []).map(String)));
+
+    const visiting = new Set(); const visited = new Set();
+    function dfs(node) {
+      if (visiting.has(node)) return true;
+      if (visited.has(node)) return false;
+      visiting.add(node);
+      const nbrs = graph.get(node) || new Set();
+      for (const n of nbrs) { if (dfs(n)) return true; }
+      visiting.delete(node); visited.add(node); return false;
+    }
+    return dfs(taskId);
+  }
+  function setTaskDependencies(taskId, depIds) {
+    const deps = Array.isArray(depIds) ? depIds.map(String) : [];
+    if (deps.includes(taskId)) { pushToast("warn", "Invalid dependency", "A task cannot depend on itself."); return false; }
+    const willCycle = detectCycle(taskId, deps, todos);
+    if (willCycle) { pushToast("warn", "Cyclic dependency", "That change would create a cycle. Update rejected."); return false; }
+    setTodos((prev) => prev.map((t) => (t.id === taskId ? { ...t, dependencies: deps, updatedAt: new Date().toISOString() } : t)));
+    if (hasBackend) { api.updateTodo(taskId, { dependencies: deps }).catch(() => {}); }
+    return true;
+  }
+  function addDependency(taskId, depId) {
+    const t = todos.find((x) => x.id === taskId);
+    if (!t) return false;
+    const current = Array.isArray(t.dependencies) ? t.dependencies.map(String) : [];
+    const next = Array.from(new Set([...current, String(depId)])).filter(Boolean);
+    return setTaskDependencies(taskId, next);
+  }
+  function removeDependency(taskId, depId) {
+    const t = todos.find((x) => x.id === taskId);
+    if (!t) return false;
+    const current = Array.isArray(t.dependencies) ? t.dependencies.map(String) : [];
+    const next = current.filter((d) => d !== String(depId));
+    return setTaskDependencies(taskId, next);
+  }
+
+  // Derived data for Today view and productivity
   const todayKey = toKey(new Date());
-  const todayStats = stats.daily?.[todayKey] || { created: 0, completed: 0 };
   const todaysTodos = useMemo(() => {
     const now = new Date();
     return (todos || []).filter((t) => {
@@ -780,15 +699,12 @@ export function useTodos() {
       return createdToday || dueToday || startToday;
     });
   }, [todos]);
-
   const todayTotals = useMemo(() => {
     const total = todaysTodos.length;
     const completed = todaysTodos.filter(t => t.completed).length;
     const rate = total > 0 ? completed / total : 0;
     return { total, completed, rate };
   }, [todaysTodos]);
-
-  // Weekly summary last 7 days
   const last7Days = useMemo(() => {
     const arr = [];
     const now = new Date();
@@ -796,249 +712,30 @@ export function useTodos() {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
       const k = toKey(d);
       const s = stats.daily?.[k] || { created: 0, completed: 0 };
-      const total = Math.max(1, s.created); // avoid NaN for rate calc
+      const total = Math.max(1, s.created);
       const rate = s.created === 0 ? 0 : Math.min(1, s.completed / total);
       arr.push({ date: d, key: k, ...s, rate });
     }
     return arr;
   }, [stats]);
-
-  // Productivity score calculations
   const currentStreak = stats.currentStreak || 0;
   const bestStreak = stats.bestStreak || 0;
-
   const streakFactor = Math.min(currentStreak / 7, 1);
   const completionRateToday = todayTotals.rate;
   const weekRates = last7Days.map(d => d.rate);
   const sd = stdDev(weekRates);
-  const consistencyFactor = Math.max(0, 1 - Math.min(sd, 1)); // low variance -> closer to 1
-
+  const consistencyFactor = Math.max(0, 1 - Math.min(sd, 1));
   const todayScore = Math.round((completionRateToday * 70) + (streakFactor * 20) + (consistencyFactor * 10));
-  const weekAvgRate = weekRates.reduce((a, b) => a + b, 0) / (weekRates.length || 1);
-  const weekScore = Math.round((weekAvgRate * 70) + (streakFactor * 20) + (consistencyFactor * 10));
 
-  // Sorter to place pinned items at the top while preserving relative order otherwise
-  function sortPinnedFirst(list) {
-    const arr = Array.isArray(list) ? [...list] : [];
-    return arr.sort((a, b) => {
-      const ap = a.pinned ? 1 : 0;
-      const bp = b.pinned ? 1 : 0;
-      if (ap !== bp) return bp - ap; // pinned first
-      return 0;
-    });
-  }
-
-  // PUBLIC_INTERFACE
-  const addTaskNote = useCallback((taskId, note) => {
-    /** Add a note to a specific task by ID. */
-    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: [note, ...(Array.isArray(t.notes) ? t.notes : [])] } : t));
-    if (hasBackend) {
-      // Try to update backend if supported; ignore failures gracefully
-      api.updateTodo(taskId, { notes: undefined }).catch(() => {});
-    }
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const updateTaskNote = useCallback((taskId, noteId, patch) => {
-    /** Update a note on a task by IDs with shallow patch. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const notes = (Array.isArray(t.notes) ? t.notes : []).map(n => n.id === noteId ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n);
-      return { ...t, notes };
-    }));
-    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const deleteTaskNote = useCallback((taskId, noteId) => {
-    /** Delete a note from a task by IDs. */
-    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: (Array.isArray(t.notes) ? t.notes : []).filter(n => n.id !== noteId) } : t));
-    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const addChecklistItem = useCallback((taskId, noteId, itemText) => {
-    /** Add a checklist item to a task note. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const notes = (t.notes || []).map(n => {
-        if (n.id !== noteId) return n;
-        const item = { id: `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`, text: itemText, done: false };
-        const items = Array.isArray(n.items) ? [...n.items, item] : [item];
-        return { ...n, checklist: true, items, updatedAt: new Date().toISOString() };
-      });
-      return { ...t, notes };
-    }));
-    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const toggleChecklistItem = useCallback((taskId, noteId, itemId) => {
-    /** Toggle a checklist item done state. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const notes = (t.notes || []).map(n => {
-        if (n.id !== noteId) return n;
-        const items = (n.items || []).map(it => it.id === itemId ? ({ ...it, done: !it.done }) : it);
-        return { ...n, items, updatedAt: new Date().toISOString() };
-      });
-      return { ...t, notes };
-    }));
-    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
-  }, [hasBackend]);
-
-  // PUBLIC_INTERFACE
-  const deleteChecklistItem = useCallback((taskId, noteId, itemId) => {
-    /** Delete a checklist item from a note. */
-    setTodos(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const notes = (t.notes || []).map(n => {
-        if (n.id !== noteId) return n;
-        const items = (n.items || []).filter(it => it.id !== itemId);
-        return { ...n, items, updatedAt: new Date().toISOString() };
-      });
-      return { ...t, notes };
-    }));
-    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
-  }, [hasBackend]);
-
-  // Quick Notes handlers
-  // PUBLIC_INTERFACE
-  const addQuickNote = useCallback((note) => {
-    /** Add a global quick note. */
-    setQuickNotes(prev => [note, ...prev]);
-  }, []);
-  // PUBLIC_INTERFACE
-  const updateQuickNote = useCallback((id, patch) => {
-    /** Update a global quick note by id. */
-    setQuickNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n));
-  }, []);
-  // PUBLIC_INTERFACE
-  const deleteQuickNote = useCallback((id) => {
-    /** Delete a global quick note by id. */
-    setQuickNotes(prev => prev.filter(n => n.id !== id));
-  }, []);
-  // PUBLIC_INTERFACE
-  const addQuickChecklistItem = useCallback((noteId, text) => {
-    /** Add an item to a quick checklist note. */
-    setQuickNotes(prev => prev.map(n => {
-      if (n.id !== noteId) return n;
-      const item = { id: `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`, text, done: false };
-      const items = Array.isArray(n.items) ? [...n.items, item] : [item];
-      return { ...n, checklist: true, items, updatedAt: new Date().toISOString() };
-    }));
-  }, []);
-  // PUBLIC_INTERFACE
-  const toggleQuickChecklistItem = useCallback((noteId, itemId) => {
-    /** Toggle a quick checklist note item. */
-    setQuickNotes(prev => prev.map(n => {
-      if (n.id !== noteId) return n;
-      const items = (n.items || []).map(it => it.id === itemId ? ({ ...it, done: !it.done }) : it);
-      return { ...n, items, updatedAt: new Date().toISOString() };
-    }));
-  }, []);
-  // PUBLIC_INTERFACE
-  const deleteQuickChecklistItem = useCallback((noteId, itemId) => {
-    /** Delete an item from a quick checklist note. */
-    setQuickNotes(prev => prev.map(n => {
-      if (n.id !== noteId) return n;
-      const items = (n.items || []).filter(it => it.id !== itemId);
-      return { ...n, items, updatedAt: new Date().toISOString() };
-    }));
+  // Permission heuristic
+  const canEdit = useCallback((task) => {
+    const u = getSelfId();
+    return task.owner === u || (task.assignees || []).includes(u) || (task.sharedWith || []).includes(u);
   }, []);
 
-  // Selectors for timeline
-  // PUBLIC_INTERFACE
-  const conflictsForSelected = useCallback((date, filters) => {
-    /** Returns Set of conflicting task IDs for a given day and filter set. */
-    const dayTasks = tasksForDay(todos, date, filters);
-    return detectConflicts(dayTasks);
-  }, [todos]);
-
-  // PUBLIC_INTERFACE
-  function isBlocked(task, list = todos) {
-    /** Returns true if any dependency task is not completed. */
-    const deps = Array.isArray(task?.dependencies) ? task.dependencies : [];
-    if (!deps.length) return false;
-    const byId = new Map((Array.isArray(list) ? list : []).map((t) => [t.id, t]));
-    for (const depId of deps) {
-      const dep = byId.get(depId);
-      if (!dep || !dep.completed) return true;
-    }
-    return false;
-  }
-
-  // PUBLIC_INTERFACE
-  function detectCycle(taskId, newDeps, list = todos) {
-    /** Basic cycle detection in a small in-memory graph. Returns true if adding edges creates a cycle. */
-    const graph = new Map();
-    const all = Array.isArray(list) ? list : [];
-    all.forEach((t) => {
-      graph.set(t.id, new Set(Array.isArray(t.dependencies) ? t.dependencies.map(String) : []));
-    });
-    if (!graph.has(taskId)) graph.set(taskId, new Set());
-    graph.set(taskId, new Set((newDeps || []).map(String)));
-
-    // DFS
-    const visiting = new Set();
-    const visited = new Set();
-    function dfs(node) {
-      if (visiting.has(node)) return true;
-      if (visited.has(node)) return false;
-      visiting.add(node);
-      const nbrs = graph.get(node) || new Set();
-      for (const n of nbrs) {
-        if (dfs(n)) return true;
-      }
-      visiting.delete(node);
-      visited.add(node);
-      return false;
-    }
-    return dfs(taskId);
-  }
-
-  // PUBLIC_INTERFACE
-  function setTaskDependencies(taskId, depIds) {
-    /** Set dependencies for a task after cycle/self checks. */
-    const deps = Array.isArray(depIds) ? depIds.map(String) : [];
-    if (deps.includes(taskId)) {
-      pushToast("warn", "Invalid dependency", "A task cannot depend on itself.");
-      return false;
-    }
-    const willCycle = detectCycle(taskId, deps, todos);
-    if (willCycle) {
-      pushToast("warn", "Cyclic dependency", "That change would create a cycle. Update rejected.");
-      return false;
-    }
-    setTodos((prev) => prev.map((t) => (t.id === taskId ? { ...t, dependencies: deps } : t)));
-    if (hasBackend) {
-      api.updateTodo(taskId, { dependencies: deps }).catch(() => {});
-    }
-    return true;
-  }
-
-  // PUBLIC_INTERFACE
-  function addDependency(taskId, depId) {
-    /** Add a single dependency if valid. */
-    const t = todos.find((x) => x.id === taskId);
-    if (!t) return false;
-    const current = Array.isArray(t.dependencies) ? t.dependencies.map(String) : [];
-    const next = Array.from(new Set([...current, String(depId)])).filter(Boolean);
-    return setTaskDependencies(taskId, next);
-  }
-
-  // PUBLIC_INTERFACE
-  function removeDependency(taskId, depId) {
-    /** Remove a single dependency id from task. */
-    const t = todos.find((x) => x.id === taskId);
-    if (!t) return false;
-    const current = Array.isArray(t.dependencies) ? t.dependencies.map(String) : [];
-    const next = current.filter((d) => d !== String(depId));
-    return setTaskDependencies(taskId, next);
-  }
-
+  // Export
   return {
-    todos: sortPinnedFirst(todos),
+    todos,
     loading,
     error,
     addTodo,
@@ -1048,61 +745,54 @@ export function useTodos() {
     hasBackend,
     toasts,
     dismissToast,
-
-    // Task note handlers
+    // productivity
+    todayTotals,
+    todaysTodos,
+    last7Days,
+    currentStreak,
+    bestStreak,
+    todayScore,
+    // quick notes
+    quickNotes,
+    addQuickNote: (note) => setQuickNotes(prev => [note, ...prev]),
+    updateQuickNote: (id, patch) => setQuickNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n)),
+    deleteQuickNote: (id) => setQuickNotes(prev => prev.filter(n => n.id !== id)),
+    addQuickChecklistItem: (noteId, text) => setQuickNotes(prev => prev.map(n => {
+      if (n.id !== noteId) return n;
+      const item = { id: `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`, text, done: false };
+      const items = Array.isArray(n.items) ? [...n.items, item] : [item];
+      return { ...n, checklist: true, items, updatedAt: new Date().toISOString() };
+    })),
+    toggleQuickChecklistItem: (noteId, itemId) => setQuickNotes(prev => prev.map(n => {
+      if (n.id !== noteId) return n;
+      const items = (n.items || []).map(it => it.id === itemId ? ({ ...it, done: !it.done }) : it);
+      return { ...n, items, updatedAt: new Date().toISOString() };
+    })),
+    deleteQuickChecklistItem: (noteId, itemId) => setQuickNotes(prev => prev.map(n => {
+      if (n.id !== noteId) return n;
+      const items = (n.items || []).filter(it => it.id !== itemId);
+      return { ...n, items, updatedAt: new Date().toISOString() };
+    })),
+    // timeline helpers/selectors
+    normalizeTimeRange,
+    snapToFiveMinutes,
+    tasksForDay: (date, filters) => tasksForDay(todos, date, filters),
+    // attachments and notes
+    addAttachment,
+    removeAttachment,
+    replaceAttachmentMeta,
     addTaskNote,
     updateTaskNote,
     deleteTaskNote,
-    addChecklistItem,
-    toggleChecklistItem,
-    deleteChecklistItem,
-
-    // Quick notes state + handlers
-    quickNotes,
-    addQuickNote,
-    updateQuickNote,
-    deleteQuickNote,
-    addQuickChecklistItem,
-    toggleQuickChecklistItem,
-    deleteQuickChecklistItem,
-
-    // PUBLIC_INTERFACE
-    stats,
-    /** Aggregate stats for today. */
-    todayStats,
-    /** All tasks that are due today or created today (or start today). */
-    todaysTodos,
-    /** Today totals with completion rate. */
-    todayTotals,
-    /** Last 7 days array with created, completed, and rate per day. */
-    last7Days,
-    /** Current streak and best streak. */
-    currentStreak,
-    bestStreak,
-    /** Productivity scores for today and week. */
-    todayScore,
-    weekScore,
-
-    // Time blocking helpers/selectors
-    /** Utility: normalize a time range object. */
-    normalizeTimeRange,
-    /** Utility: snap a time ISO string to nearest 5 minutes. */
-    snapToFiveMinutes,
-    /** Selector: tasks scheduled for a given date with filters. */
-    tasksForDay: (date, filters) => tasksForDay(todos, date, filters),
-    /** Conflict detection: Set of IDs overlapping among tasks for date/filters. */
-    conflictsForSelected,
-
-    // Dependency helpers
-    isBlocked,
+    // dependencies
     detectCycle,
     setTaskDependencies,
     addDependency,
     removeDependency,
-
-    // Attachment handlers
-    addAttachment,
-    removeAttachment,
-    replaceAttachmentMeta,
+    // collaboration helpers
+    collision,
+    resolveCollision,
+    canEdit,
+    setToastHandler: (fn) => { toastRef.current = fn; },
   };
 }

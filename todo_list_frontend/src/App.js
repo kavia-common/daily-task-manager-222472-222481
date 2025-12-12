@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import './App.css';
 import './styles/theme.css';
 import TodoInput from './components/TodoInput';
@@ -10,12 +10,12 @@ import { useTodos } from './hooks/useTodos';
 import QuickNotesPanel from './components/QuickNotesPanel';
 import DayTimeline from './components/DayTimeline';
 import { tasksForDay as selectorTasksForDay } from './hooks/useTodos';
+import { CollaborationProvider } from './components/CollaborationProvider';
 
 // PUBLIC_INTERFACE
-function App() {
+function AppInner() {
   /**
-   * Top-level component for the To-Do app with productivity tabs (All | Today | Weekly),
-   * category/priority controls and due/notification filters.
+   * Top-level component with collaboration toasts and existing views/tabs.
    */
   const {
     todos,
@@ -35,10 +35,7 @@ function App() {
     currentStreak,
     bestStreak,
     todayScore,
-  } = useTodos();
-
-  // quick notes from hook
-  const {
+    // quick notes
     quickNotes,
     addQuickNote,
     updateQuickNote,
@@ -51,13 +48,13 @@ function App() {
   // Filters and sorting
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
-  const [prioritySort, setPrioritySort] = useState('none'); // 'none' | 'high-first' | 'low-first'
-  const [dueFilter, setDueFilter] = useState('all'); // 'all' | 'today' | 'week' | 'overdue'
-  const [notesOnly, setNotesOnly] = useState(false); // quick filter chip
-  const [attachmentsOnly, setAttachmentsOnly] = useState(false); // optional filter chip
+  const [prioritySort, setPrioritySort] = useState('none');
+  const [dueFilter, setDueFilter] = useState('all');
+  const [notesOnly, setNotesOnly] = useState(false);
+  const [attachmentsOnly, setAttachmentsOnly] = useState(false);
 
   // Tabs
-  const [tab, setTab] = useState('all'); // 'all' | 'today' | 'weekly' | 'timeline'
+  const [tab, setTab] = useState('all');
   const [timelineDate, setTimelineDate] = useState(() => {
     const d = new Date();
     const y = d.getFullYear();
@@ -79,7 +76,7 @@ function App() {
     const target = new Date(iso);
     const now = new Date();
     const oneDay = 86400000;
-    const dayOfWeek = now.getDay(); // 0-6
+    const dayOfWeek = now.getDay();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekStart = new Date(start.getTime() - dayOfWeek * oneDay);
     const weekEnd = new Date(weekStart.getTime() + 7 * oneDay);
@@ -114,7 +111,6 @@ function App() {
       return okCat && okPri && okDue && okNotes && okAtts;
     });
 
-    // Apply existing priority sort within groups while ensuring pinned first
     const pinSort = (a, b) => {
       const ap = a.pinned ? 1 : 0;
       const bp = b.pinned ? 1 : 0;
@@ -136,7 +132,6 @@ function App() {
         const bw = weight[b.priority || 'medium'];
         const priCmp = prioritySort === 'high-first' ? (bw - aw) : (aw - bw);
         if (priCmp !== 0) return priCmp;
-        // ready before blocked
         const ab = blocked(a) ? 1 : 0;
         const bb = blocked(b) ? 1 : 0;
         if (ab !== bb) return ab - bb;
@@ -154,6 +149,20 @@ function App() {
     }
     return items;
   }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab, notesOnly, attachmentsOnly]);
+
+  const toastTimer = useRef(null);
+  const [toastMsg, setToastMsg] = useState('');
+  const todosHookForToast = useTodos();
+  useEffect(() => {
+    // register toast handler for remote updates
+    if (todosHookForToast.setToastHandler) {
+      todosHookForToast.setToastHandler((msg) => {
+        setToastMsg(msg);
+        clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToastMsg(''), 2000);
+      });
+    }
+  }, [todosHookForToast]);
 
   return (
     <div className="app-shell">
@@ -174,30 +183,10 @@ function App() {
 
         {/* Tabs */}
         <div className="tabs" role="tablist" aria-label="Views">
-          <button
-            role="tab"
-            aria-selected={tab === 'all'}
-            className={`tab ${tab === 'all' ? 'active' : ''}`}
-            onClick={() => setTab('all')}
-          >All</button>
-          <button
-            role="tab"
-            aria-selected={tab === 'today'}
-            className={`tab ${tab === 'today' ? 'active' : ''}`}
-            onClick={() => setTab('today')}
-          >Today</button>
-          <button
-            role="tab"
-            aria-selected={tab === 'weekly'}
-            className={`tab ${tab === 'weekly' ? 'active' : ''}`}
-            onClick={() => setTab('weekly')}
-          >Weekly</button>
-          <button
-            role="tab"
-            aria-selected={tab === 'timeline'}
-            className={`tab ${tab === 'timeline' ? 'active' : ''}`}
-            onClick={() => setTab('timeline')}
-          >Timeline</button>
+          <button role="tab" aria-selected={tab === 'all'} className={`tab ${tab === 'all' ? 'active' : ''}`} onClick={() => setTab('all')}>All</button>
+          <button role="tab" aria-selected={tab === 'today'} className={`tab ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>Today</button>
+          <button role="tab" aria-selected={tab === 'weekly'} className={`tab ${tab === 'weekly' ? 'active' : ''}`} onClick={() => setTab('weekly')}>Weekly</button>
+          <button role="tab" aria-selected={tab === 'timeline'} className={`tab ${tab === 'timeline' ? 'active' : ''}`} onClick={() => setTab('timeline')}>Timeline</button>
         </div>
 
         {/* Notification/Toast area */}
@@ -211,7 +200,6 @@ function App() {
           ))}
         </div>
 
-        {/* Quick Notes */}
         <QuickNotesPanel
           notes={quickNotes}
           addQuickNote={addQuickNote}
@@ -227,13 +215,7 @@ function App() {
         <div className="filters" aria-label="Task filters">
           <div className="filter-group">
             <label htmlFor="category-filter" className="filter-label">Category</label>
-            <select
-              id="category-filter"
-              className="select"
-              aria-label="Filter by category"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-            >
+            <select id="category-filter" className="select" aria-label="Filter by category" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
               <option value="all">All</option>
               <option value="work">Work</option>
               <option value="home">Home</option>
@@ -244,13 +226,7 @@ function App() {
 
           <div className="filter-group">
             <label htmlFor="priority-filter" className="filter-label">Priority</label>
-            <select
-              id="priority-filter"
-              className="select"
-              aria-label="Filter by priority"
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-            >
+            <select id="priority-filter" className="select" aria-label="Filter by priority" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
               <option value="all">All</option>
               <option value="high">High</option>
               <option value="medium">Medium</option>
@@ -260,13 +236,7 @@ function App() {
 
           <div className="filter-group">
             <label htmlFor="priority-sort" className="filter-label">Sort</label>
-            <select
-              id="priority-sort"
-              className="select"
-              aria-label="Sort by priority"
-              value={prioritySort}
-              onChange={(e) => setPrioritySort(e.target.value)}
-            >
+            <select id="priority-sort" className="select" aria-label="Sort by priority" value={prioritySort} onChange={(e) => setPrioritySort(e.target.value)}>
               <option value="none">No sort</option>
               <option value="high-first">High → Low</option>
               <option value="low-first">Low → High</option>
@@ -275,13 +245,7 @@ function App() {
 
           <div className="filter-group">
             <label htmlFor="due-filter" className="filter-label">Due</label>
-            <select
-              id="due-filter"
-              className="select"
-              aria-label="Filter by due"
-              value={dueFilter}
-              onChange={(e) => setDueFilter(e.target.value)}
-            >
+            <select id="due-filter" className="select" aria-label="Filter by due" value={dueFilter} onChange={(e) => setDueFilter(e.target.value)}>
               <option value="all">All</option>
               <option value="today">Today</option>
               <option value="week">This Week</option>
@@ -290,24 +254,12 @@ function App() {
           </div>
 
           <div className="filter-group" style={{ alignSelf: "center" }}>
-            <button
-              className={`chip ${notesOnly ? "chip-selected" : ""}`}
-              aria-pressed={notesOnly}
-              onClick={() => setNotesOnly(v => !v)}
-              aria-label="Filter tasks that have notes"
-              title="Filter: Notes"
-            >
+            <button className={`chip ${notesOnly ? "chip-selected" : ""}`} aria-pressed={notesOnly} onClick={() => setNotesOnly(v => !v)} aria-label="Filter tasks that have notes" title="Filter: Notes">
               📝 Notes
             </button>
           </div>
           <div className="filter-group" style={{ alignSelf: "center" }}>
-            <button
-              className={`chip ${attachmentsOnly ? "chip-selected" : ""}`}
-              aria-pressed={attachmentsOnly}
-              onClick={() => setAttachmentsOnly(v => !v)}
-              aria-label="Filter tasks that have attachments"
-              title="Filter: Attachments"
-            >
+            <button className={`chip ${attachmentsOnly ? "chip-selected" : ""}`} aria-pressed={attachmentsOnly} onClick={() => setAttachmentsOnly(v => !v)} aria-label="Filter tasks that have attachments" title="Filter: Attachments">
               📎 Attachments
             </button>
           </div>
@@ -352,60 +304,46 @@ function App() {
                   onChange={(e) => setTimelineDate(e.target.value)}
                   style={{ maxWidth: 180 }}
                 />
-                <button
-                  className="btn btn-small"
-                  onClick={() => {
-                    const d = new Date();
-                    const y = d.getFullYear();
-                    const m = String(d.getMonth() + 1).padStart(2, "0");
-                    const day = String(d.getDate()).padStart(2, "0");
-                    setTimelineDate(`${y}-${m}-${day}`);
-                  }}
-                  aria-label="Jump to today"
-                  title="Today"
-                >
-                  Today
-                </button>
+                <button className="btn btn-small" onClick={() => {
+                  const d = new Date();
+                  const y = d.getFullYear();
+                  const m = String(d.getMonth() + 1).padStart(2, "0");
+                  const day = String(d.getDate()).padStart(2, "0");
+                  setTimelineDate(`${y}-${m}-${day}`);
+                }} aria-label="Jump to today" title="Today">Today</button>
               </div>
             </div>
             {(() => {
-              // prepare filtered tasks for selected date based on existing filters
               const dateObj = timelineDate ? new Date(timelineDate) : new Date();
               const tasksFiltered = selectorTasksForDay(
-                filteredTodos, // already applies category/priority/due/notes/pinned ordering
+                filteredTodos,
                 dateObj,
                 { category: categoryFilter, priority: priorityFilter, due: dueFilter, notesOnly }
               );
-              const conflicts = new Set(
-                // naive conflicts by scanning filtered list
-                (() => {
-                  const ids = new Set();
-                  for (let i = 0; i < tasksFiltered.length; i++) {
-                    const a = tasksFiltered[i];
-                    if (!a.startTime || !a.endTime) continue;
-                    for (let j = i + 1; j < tasksFiltered.length; j++) {
-                      const b = tasksFiltered[j];
-                      if (!b.startTime || !b.endTime) continue;
-                      const as = new Date(a.startTime).getTime();
-                      const ae = new Date(a.endTime).getTime();
-                      const bs = new Date(b.startTime).getTime();
-                      const be = new Date(b.endTime).getTime();
-                      if (Math.max(as, bs) < Math.min(ae, be)) {
-                        ids.add(a.id); ids.add(b.id);
-                      }
-                    }
+              const conflicts = new Set((() => {
+                const ids = new Set();
+                for (let i = 0; i < tasksFiltered.length; i++) {
+                  const a = tasksFiltered[i];
+                  if (!a.startTime || !a.endTime) continue;
+                  for (let j = i + 1; j < tasksFiltered.length; j++) {
+                    const b = tasksFiltered[j];
+                    if (!b.startTime || !b.endTime) continue;
+                    const as = new Date(a.startTime).getTime();
+                    const ae = new Date(a.endTime).getTime();
+                    const bs = new Date(b.startTime).getTime();
+                    const be = new Date(b.endTime).getTime();
+                    if (Math.max(as, bs) < Math.min(ae, be)) { ids.add(a.id); ids.add(b.id); }
                   }
-                  return Array.from(ids);
-                })()
-              );
+                }
+                return Array.from(ids);
+              })());
               return (
                 <DayTimeline
                   date={dateObj}
                   tasks={tasksFiltered}
                   conflictIds={conflicts}
                   onSelectTask={(id) => {
-                    // focus task in list by scrolling into view if present
-                    const esc = (s) => (window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(s) : String(s).replace(/"/g, '\\"'));
+                    const esc = (s) => (window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(s) : String(s).replace(/\"/g, '\\"'));
                     const title = tasksFiltered.find(t=>t.id===id)?.title || "";
                     const el = document.querySelector(`[aria-label="Task ${esc(title)}"]`);
                     if (el && typeof el.scrollIntoView === "function") {
@@ -425,7 +363,21 @@ function App() {
           />
         )}
       </main>
+      {toastMsg && (
+        <div className="toast info" role="status" aria-live="polite" style={{ position: 'fixed', bottom: 16, right: 16 }}>
+          <div className="toast-title">Update</div>
+          <div className="toast-body">{toastMsg}</div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function App() {
+  return (
+    <CollaborationProvider>
+      <AppInner />
+    </CollaborationProvider>
   );
 }
 

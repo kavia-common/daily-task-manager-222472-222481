@@ -176,6 +176,82 @@ body {
   overflow: hidden;
 }
 
+/* Collaboration UI */
+.presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #eef2ff;
+  padding: 4px 8px;
+  border-radius: 9999px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid rgba(17,24,39,0.08);
+}
+.presence-dot {
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border-radius: 9999px;
+}
+.presence-count {
+  font-weight: 600;
+}
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  background: #dbeafe;
+  color: #1e3a8a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.avatar.me {
+  background: #bee3f8;
+}
+.assign-popover {
+  grid-column: 1 / -1;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.close-pop {
+  margin-top: 8px;
+  background: #6b7280;
+  color: white;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.collision-banner {
+  background: #fff7ed;
+  color: #7c2d12;
+  border: 1px solid #fed7aa;
+  padding: 8px 10px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.collision-actions button {
+  margin-left: 6px;
+}
+.collision-actions .primary {
+  background: var(--color-secondary);
+  border: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 /* Selects and small controls */
 .select {
   height: 44px;
