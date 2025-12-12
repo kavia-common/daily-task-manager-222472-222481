@@ -1,12 +1,13 @@
 /**
  * useTodos hook manages to-do items with localStorage persistence by default.
  * If a backend is configured (via env), it attempts to sync with it but falls back gracefully.
- * Adds reminders, due dates, repeat schedules, and in-app notifications.
+ * Adds reminders, due dates, repeat schedules, in-app notifications, and productivity stats.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiBase } from "../utils/api";
 
 const STORAGE_KEY = "todos_ocean_pro";
+const STATS_KEY = "todo_stats_v1";
 
 // Helpers for local persistence
 function ensureDefaults(list) {
@@ -19,6 +20,9 @@ function ensureDefaults(list) {
     repeat: t.repeat || "none",
     remindAt: typeof t.remindAt === "string" || t.remindAt === null ? t.remindAt : null,
     lastNotifiedAt: t.lastNotifiedAt || null,
+    // new metadata fields (backward compatible)
+    completedAt: typeof t.completedAt === "string" || t.completedAt === null ? t.completedAt ?? null : null,
+    createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
   }));
 }
 
@@ -40,15 +44,34 @@ function saveLocal(todos) {
   }
 }
 
+function loadStats() {
+  try {
+    const raw = localStorage.getItem(STATS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function saveStats(stats) {
+  try {
+    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch {
+    // ignore
+  }
+}
+
 function generateLocalId() {
   return `local_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 }
 
+function isSameLocalDate(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
 function isToday(date) {
   const now = new Date();
-  return date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
+  return isSameLocalDate(date, now);
 }
 
 function addRepeat(dueISO, repeat, keepTime = null) {
@@ -65,15 +88,87 @@ function addRepeat(dueISO, repeat, keepTime = null) {
   return out.toISOString();
 }
 
+function toKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function initStatsFromTodos(todos) {
+  // Build aggregates from current todos (migration safe)
+  const stats = {
+    daily: {}, // key -> { created, completed }
+    lastProductiveDate: null,
+    currentStreak: 0,
+    bestStreak: 0,
+    threshold: 1,
+  };
+  todos.forEach((t) => {
+    if (t.createdAt) {
+      const kd = toKey(new Date(t.createdAt));
+      stats.daily[kd] = stats.daily[kd] || { created: 0, completed: 0 };
+      stats.daily[kd].created += 1;
+    }
+    if (t.completed && t.completedAt) {
+      const kc = toKey(new Date(t.completedAt));
+      stats.daily[kc] = stats.daily[kc] || { created: 0, completed: 0 };
+      stats.daily[kc].completed += 1;
+      stats.lastProductiveDate = kc;
+    }
+  });
+  // compute streaks
+  recomputeStreaks(stats);
+  return stats;
+}
+
+function recomputeStreaks(stats) {
+  const threshold = stats.threshold || 1;
+  const today = new Date();
+  let streak = 0;
+  let best = stats.bestStreak || 0;
+
+  // walk backwards from today until a day that doesn't meet threshold
+  for (let i = 0; i < 3650; i++) { // cap 10 years
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const k = toKey(d);
+    const entry = stats.daily[k] || { created: 0, completed: 0 };
+    if ((entry.completed || 0) >= threshold) {
+      streak += 1;
+      if (streak > best) best = streak;
+    } else {
+      break;
+    }
+  }
+  stats.currentStreak = streak;
+  stats.bestStreak = Math.max(best, stats.bestStreak || 0);
+}
+
+function stdDev(arr) {
+  if (!arr.length) return 0;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  const variance = arr.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / arr.length;
+  return Math.sqrt(variance);
+}
+
 // PUBLIC_INTERFACE
 export function useTodos() {
-  /** Hook that exposes todos state, notifications, and CRUD actions. */
+  /** Hook that exposes todos state, notifications, CRUD actions, and productivity stats. */
   const [todos, setTodos] = useState(() => loadLocal());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [toasts, setToasts] = useState([]);
   const hasBackend = useMemo(() => !!getApiBase(), []);
   const schedulerRef = useRef(null);
+
+  // stats state
+  const [stats, setStats] = useState(() => {
+    const existing = loadStats();
+    if (existing) return existing;
+    const fromTodos = initStatsFromTodos(loadLocal());
+    saveStats(fromTodos);
+    return fromTodos;
+  });
 
   // Initial load
   useEffect(() => {
@@ -89,6 +184,10 @@ export function useTodos() {
             const withDefaults = ensureDefaults(data);
             setTodos(withDefaults);
             saveLocal(withDefaults); // keep a local cache
+            // refresh stats from loaded todos if no stats exist yet
+            const newStats = initStatsFromTodos(withDefaults);
+            setStats(newStats);
+            saveStats(newStats);
             setLoading(false);
             return;
           }
@@ -98,7 +197,15 @@ export function useTodos() {
       }
       // fallback to local
       if (isMounted) {
-        setTodos(loadLocal());
+        const localTodos = loadLocal();
+        setTodos(localTodos);
+        // ensure stats exists
+        const existing = loadStats();
+        if (!existing) {
+          const s = initStatsFromTodos(localTodos);
+          setStats(s);
+          saveStats(s);
+        }
         setLoading(false);
       }
     }
@@ -112,6 +219,11 @@ export function useTodos() {
   useEffect(() => {
     saveLocal(todos);
   }, [todos]);
+
+  // Persist stats
+  useEffect(() => {
+    saveStats(stats);
+  }, [stats]);
 
   // Toast helpers
   const pushToast = useCallback((kind, title, message) => {
@@ -177,22 +289,66 @@ export function useTodos() {
     };
   }, [pushToast]);
 
+  // Stats helpers
+  function incrementCreated(dateIso) {
+    const d = new Date(dateIso || new Date().toISOString());
+    const k = toKey(d);
+    setStats((prev) => {
+      const daily = { ...(prev.daily || {}) };
+      daily[k] = daily[k] || { created: 0, completed: 0 };
+      daily[k].created += 1;
+      const next = { ...prev, daily };
+      saveStats(next);
+      return next;
+    });
+  }
+  function incrementCompleted(dateIso) {
+    const d = new Date(dateIso || new Date().toISOString());
+    const k = toKey(d);
+    setStats((prev) => {
+      const daily = { ...(prev.daily || {}) };
+      daily[k] = daily[k] || { created: 0, completed: 0 };
+      daily[k].completed += 1;
+      const next = { ...prev, daily, lastProductiveDate: k };
+      recomputeStreaks(next);
+      saveStats(next);
+      return next;
+    });
+  }
+  function decrementCompleted(dateIso) {
+    const d = new Date(dateIso || new Date().toISOString());
+    const k = toKey(d);
+    setStats((prev) => {
+      const daily = { ...(prev.daily || {}) };
+      daily[k] = daily[k] || { created: 0, completed: 0 };
+      daily[k].completed = Math.max(0, (daily[k].completed || 0) - 1);
+      const next = { ...prev, daily };
+      // Recompute streak as unchecking may break it
+      recomputeStreaks(next);
+      saveStats(next);
+      return next;
+    });
+  }
+
   // Actions
   const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null) => {
+    const nowIso = new Date().toISOString();
     const baseTodo = {
       id: generateLocalId(),
       title: String(title).trim(),
       completed: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
       category,
       priority,
       dueDate: dueDate || null,
       repeat: repeat || "none",
       remindAt: remindAt || null,
       lastNotifiedAt: null,
+      completedAt: null,
     };
     // optimistic update
     setTodos((prev) => [baseTodo, ...prev]);
+    incrementCreated(nowIso);
 
     if (hasBackend) {
       try {
@@ -205,6 +361,8 @@ export function useTodos() {
           repeat: baseTodo.repeat,
           remindAt: baseTodo.remindAt,
           lastNotifiedAt: baseTodo.lastNotifiedAt,
+          createdAt: baseTodo.createdAt,
+          completedAt: baseTodo.completedAt,
         });
         if (created && created.id) {
           // reconcile: replace local id with server id
@@ -220,10 +378,12 @@ export function useTodos() {
   }, [hasBackend]);
 
   const updateTodo = useCallback(async (id, updates) => {
-    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...ensureDefaults([updates])[0] } : t)));
+    // ensure defaults on updates & avoid removing completedAt unintentionally
+    const normalized = ensureDefaults([updates])[0];
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...normalized } : t)));
     if (hasBackend) {
       try {
-        await api.updateTodo(id, updates);
+        await api.updateTodo(id, normalized);
       } catch (e) {
         setError(e);
       }
@@ -231,33 +391,50 @@ export function useTodos() {
   }, [hasBackend]);
 
   const toggleTodo = useCallback(async (id) => {
+    let toggled;
     setTodos((prev) => {
-      return prev.map((t) => {
+      const nowIso = new Date().toISOString();
+      const mapped = prev.map((t) => {
         if (t.id !== id) return t;
         const newCompleted = !t.completed;
+        let next = { ...t, completed: newCompleted };
+        // set completion timestamp metadata
+        if (newCompleted) {
+          // avoid double counting within a day: only increment if no completedAt today
+          const newCompletedAt = nowIso;
+          const hadSameDay = t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date());
+          next.completedAt = newCompletedAt;
+          if (!hadSameDay) incrementCompleted(newCompletedAt);
+        } else {
+          // unchecking should decrement if it was completed today
+          if (t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date())) {
+            decrementCompleted(t.completedAt);
+          }
+          next.completedAt = null;
+        }
 
         // If completing and has a repeat schedule, auto-schedule next
         if (newCompleted && t.repeat && t.repeat !== "none") {
-          const nextDue = addRepeat(t.dueDate || new Date().toISOString(), t.repeat, t.remindAt || null);
-          return {
-            ...t,
-            completed: newCompleted,
-            dueDate: nextDue,
-            lastNotifiedAt: null,
-          };
+          const nextDue = addRepeat(t.dueDate || nowIso, t.repeat, t.remindAt || null);
+          next.dueDate = nextDue;
+          next.lastNotifiedAt = null;
         }
-        return { ...t, completed: newCompleted };
+        toggled = next;
+        return next;
       });
+      return mapped;
     });
 
     if (hasBackend) {
       try {
         const t = todos.find((x) => x.id === id);
         const newCompleted = !(t?.completed ?? false);
+        const nowIso = new Date().toISOString();
         const updates = { completed: newCompleted };
-        // if this one is repeat and completed, also send dueDate shift
+        // optional completion timestamp propagation
+        updates.completedAt = newCompleted ? nowIso : null;
         if (t && newCompleted && t.repeat && t.repeat !== "none") {
-          updates.dueDate = addRepeat(t.dueDate || new Date().toISOString(), t.repeat, t.remindAt || null);
+          updates.dueDate = addRepeat(t.dueDate || nowIso, t.repeat, t.remindAt || null);
           updates.lastNotifiedAt = null;
         }
         await api.updateTodo(id, updates);
@@ -268,7 +445,14 @@ export function useTodos() {
   }, [hasBackend, todos]);
 
   const deleteTodo = useCallback(async (id) => {
-    setTodos((prev) => prev.filter((t) => t.id !== id));
+    // If deleting a completed today item, adjust stats to avoid stale counts
+    setTodos((prev) => {
+      const toDelete = prev.find(t => t.id === id);
+      if (toDelete?.completedAt && isSameLocalDate(new Date(toDelete.completedAt), new Date())) {
+        decrementCompleted(toDelete.completedAt);
+      }
+      return prev.filter((t) => t.id !== id);
+    });
     if (hasBackend) {
       try {
         await api.deleteTodo(id);
@@ -277,6 +461,54 @@ export function useTodos() {
       }
     }
   }, [hasBackend]);
+
+  // Derived data for Today view
+  const todayKey = toKey(new Date());
+  const todayStats = stats.daily?.[todayKey] || { created: 0, completed: 0 };
+  const todaysTodos = useMemo(() => {
+    const now = new Date();
+    return (todos || []).filter((t) => {
+      const createdToday = t.createdAt && isSameLocalDate(new Date(t.createdAt), now);
+      const dueToday = t.dueDate && isSameLocalDate(new Date(t.dueDate), now);
+      return createdToday || dueToday;
+    });
+  }, [todos]);
+
+  const todayTotals = useMemo(() => {
+    const total = todaysTodos.length;
+    const completed = todaysTodos.filter(t => t.completed).length;
+    const rate = total > 0 ? completed / total : 0;
+    return { total, completed, rate };
+  }, [todaysTodos]);
+
+  // Weekly summary last 7 days
+  const last7Days = useMemo(() => {
+    const arr = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const k = toKey(d);
+      const s = stats.daily?.[k] || { created: 0, completed: 0 };
+      const total = Math.max(1, s.created); // avoid NaN for rate calc
+      const rate = s.created === 0 ? 0 : Math.min(1, s.completed / total);
+      arr.push({ date: d, key: k, ...s, rate });
+    }
+    return arr;
+  }, [stats]);
+
+  // Productivity score calculations
+  const currentStreak = stats.currentStreak || 0;
+  const bestStreak = stats.bestStreak || 0;
+
+  const streakFactor = Math.min(currentStreak / 7, 1);
+  const completionRateToday = todayTotals.rate;
+  const weekRates = last7Days.map(d => d.rate);
+  const sd = stdDev(weekRates);
+  const consistencyFactor = Math.max(0, 1 - Math.min(sd, 1)); // low variance -> closer to 1
+
+  const todayScore = Math.round((completionRateToday * 70) + (streakFactor * 20) + (consistencyFactor * 10));
+  const weekAvgRate = weekRates.reduce((a, b) => a + b, 0) / (weekRates.length || 1);
+  const weekScore = Math.round((weekAvgRate * 70) + (streakFactor * 20) + (consistencyFactor * 10));
 
   return {
     todos,
@@ -289,5 +521,22 @@ export function useTodos() {
     hasBackend,
     toasts,
     dismissToast,
+
+    // PUBLIC_INTERFACE
+    stats,
+    /** Aggregate stats for today. */
+    todayStats,
+    /** All tasks that are due today or created today. */
+    todaysTodos,
+    /** Today totals with completion rate. */
+    todayTotals,
+    /** Last 7 days array with created, completed, and rate per day. */
+    last7Days,
+    /** Current streak and best streak. */
+    currentStreak,
+    bestStreak,
+    /** Productivity scores for today and week. */
+    todayScore,
+    weekScore,
   };
 }

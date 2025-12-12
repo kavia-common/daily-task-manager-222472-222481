@@ -3,13 +3,16 @@ import './App.css';
 import './styles/theme.css';
 import TodoInput from './components/TodoInput';
 import TodoList from './components/TodoList';
+import ProductivityHeader from './components/ProductivityHeader';
+import DailyView from './components/DailyView';
+import WeeklySummary from './components/WeeklySummary';
 import { useTodos } from './hooks/useTodos';
 
 // PUBLIC_INTERFACE
 function App() {
   /**
-   * Top-level component for the To-Do app with category/priority controls and due/notification filters.
-   * Renders a centered column layout with an input bar and task list.
+   * Top-level component for the To-Do app with productivity tabs (All | Today | Weekly),
+   * category/priority controls and due/notification filters.
    */
   const {
     todos,
@@ -22,6 +25,13 @@ function App() {
     hasBackend,
     toasts,
     dismissToast,
+    // productivity
+    todayTotals,
+    todaysTodos,
+    last7Days,
+    currentStreak,
+    bestStreak,
+    todayScore,
   } = useTodos();
 
   // Filters and sorting
@@ -29,6 +39,9 @@ function App() {
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [prioritySort, setPrioritySort] = useState('none'); // 'none' | 'high-first' | 'low-first'
   const [dueFilter, setDueFilter] = useState('all'); // 'all' | 'today' | 'week' | 'overdue'
+
+  // Tabs
+  const [tab, setTab] = useState('all'); // 'all' | 'today' | 'weekly'
 
   const withinSameDay = (iso) => {
     if (!iso) return false;
@@ -58,7 +71,11 @@ function App() {
     const cat = String(categoryFilter || 'all');
     const pri = String(priorityFilter || 'all');
     const due = String(dueFilter || 'all');
-    let items = (todos || []).filter((t) => {
+    let source = todos || [];
+    if (tab === 'today') {
+      source = todaysTodos;
+    }
+    let items = source.filter((t) => {
       const tCat = t.category || 'work';
       const tPri = t.priority || 'medium';
       const okCat = cat === 'all' ? true : tCat === cat;
@@ -80,7 +97,7 @@ function App() {
       });
     }
     return items;
-  }, [todos, categoryFilter, priorityFilter, prioritySort, dueFilter]);
+  }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab]);
 
   return (
     <div className="app-shell">
@@ -90,6 +107,35 @@ function App() {
           <div className="header-badge" title={hasBackend ? "Using backend API" : "Using localStorage"}>
             {hasBackend ? "API Connected" : "Local Mode"}
           </div>
+        </div>
+
+        <ProductivityHeader
+          todayTotals={todayTotals}
+          todayScore={todayScore}
+          currentStreak={currentStreak}
+          bestStreak={bestStreak}
+        />
+
+        {/* Tabs */}
+        <div className="tabs" role="tablist" aria-label="Views">
+          <button
+            role="tab"
+            aria-selected={tab === 'all'}
+            className={`tab ${tab === 'all' ? 'active' : ''}`}
+            onClick={() => setTab('all')}
+          >All</button>
+          <button
+            role="tab"
+            aria-selected={tab === 'today'}
+            className={`tab ${tab === 'today' ? 'active' : ''}`}
+            onClick={() => setTab('today')}
+          >Today</button>
+          <button
+            role="tab"
+            aria-selected={tab === 'weekly'}
+            className={`tab ${tab === 'weekly' ? 'active' : ''}`}
+            onClick={() => setTab('weekly')}
+          >Weekly</button>
         </div>
 
         {/* Notification/Toast area */}
@@ -179,12 +225,25 @@ function App() {
           </div>
         ) : null}
 
-        <TodoList
-          todos={filteredTodos}
-          onToggle={toggleTodo}
-          onDelete={deleteTodo}
-          onUpdate={updateTodo}
-        />
+        {tab === 'weekly' ? (
+          <WeeklySummary days={last7Days} />
+        ) : tab === 'today' ? (
+          <DailyView
+            todaysTodos={todaysTodos}
+            todayTotals={todayTotals}
+            onAdd={addTodo}
+            onToggle={toggleTodo}
+            onDelete={deleteTodo}
+            onUpdate={updateTodo}
+          />
+        ) : (
+          <TodoList
+            todos={filteredTodos}
+            onToggle={toggleTodo}
+            onDelete={deleteTodo}
+            onUpdate={updateTodo}
+          />
+        )}
       </main>
     </div>
   );
