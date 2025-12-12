@@ -3,9 +3,10 @@ import TaskNotes from "./TaskNotes";
 import NotesBadge from "./NotesBadge";
 
 /**
- * Renders a single todo item with checkbox toggle, inline edit, delete, and per-task notes.
+ * Renders a single todo item with checkbox toggle, inline edit, delete, per-task notes,
+ * and inline time blocking editing.
  * Props:
- * - todo: { id, title, completed, category?, priority?, dueDate?: string|null, repeat?: string, remindAt?: string|null, lastNotifiedAt?: string|null, notes?: [] }
+ * - todo: { id, title, completed, category?, priority?, dueDate?: string|null, repeat?: string, remindAt?: string|null, lastNotifiedAt?: string|null, notes?: [], startTime?: string|null, endTime?: string|null }
  * - onToggle(id)
  * - onDelete(id)
  * - onUpdate(id, updates)
@@ -14,7 +15,7 @@ import NotesBadge from "./NotesBadge";
 
 // PUBLIC_INTERFACE
 export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
-  /** Todo item component with inline editing support including due/repeat/remindAt and notes expando. */
+  /** Todo item component with inline editing support including due/repeat/remindAt, time blocking and notes expando. */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(todo.title);
   const [catDraft, setCatDraft] = useState(todo.category || "work");
@@ -25,12 +26,36 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
   const inputRef = useRef(null);
   const [showNotes, setShowNotes] = useState(false);
 
+  // time blocking drafts
+  const [startDate, setStartDate] = useState(todo.startTime ? toLocalDateInput(todo.startTime) : "");
+  const [startTime, setStartTime] = useState(todo.startTime ? toLocalTimeInput(todo.startTime) : "");
+  const [endDate, setEndDate] = useState(todo.endTime ? toLocalDateInput(todo.endTime) : (todo.startTime ? toLocalDateInput(todo.startTime) : ""));
+  const [endTime, setEndTime] = useState(todo.endTime ? toLocalTimeInput(todo.endTime) : "");
+  const [timeError, setTimeError] = useState("");
+
   function toLocalDateInput(iso) {
     const d = new Date(iso);
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
+  }
+  function toLocalTimeInput(iso) {
+    const d = new Date(iso);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+  function buildISO(d, t) {
+    if (!d || !t) return null;
+    try {
+      const [y, m, day] = d.split("-").map((s) => parseInt(s, 10));
+      const [hh, mm] = t.split(":").map((s) => parseInt(s, 10));
+      const dt = new Date(y, (m - 1), day, hh || 0, mm || 0, 0, 0);
+      return dt.toISOString();
+    } catch {
+      return null;
+    }
   }
 
   useEffect(() => {
@@ -47,7 +72,12 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     setDueDraft(todo.dueDate ? toLocalDateInput(todo.dueDate) : "");
     setRepeatDraft(todo.repeat || "none");
     setRemindDraft(todo.remindAt || "");
-  }, [todo.title, todo.category, todo.priority, todo.dueDate, todo.repeat, todo.remindAt]);
+
+    setStartDate(todo.startTime ? toLocalDateInput(todo.startTime) : "");
+    setStartTime(todo.startTime ? toLocalTimeInput(todo.startTime) : "");
+    setEndDate(todo.endTime ? toLocalDateInput(todo.endTime) : (todo.startTime ? toLocalDateInput(todo.startTime) : ""));
+    setEndTime(todo.endTime ? toLocalTimeInput(todo.endTime) : "");
+  }, [todo.title, todo.category, todo.priority, todo.dueDate, todo.repeat, todo.remindAt, todo.startTime, todo.endTime]);
 
   const confirmEdit = () => {
     const v = draft.trim();
@@ -71,10 +101,34 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     if ((todo.repeat || "none") !== repeatDraft) updates.repeat = repeatDraft;
     if ((todo.remindAt || null) !== (remind || null)) updates.remindAt = remind;
 
+    // time blocking normalization
+    const sISO = buildISO(startDate, startTime);
+    const eISO = buildISO(endDate || startDate, endTime);
+    const { start, end, error } = safeNormalize(sISO, eISO);
+    if (error) setTimeError(error);
+    if ((todo.startTime || null) !== (start || null)) updates.startTime = start;
+    if ((todo.endTime || null) !== (end || null)) updates.endTime = end;
+
     if (Object.keys(updates).length > 0) {
       onUpdate(todo.id, updates);
     }
     setEditing(false);
+  };
+
+  const safeNormalize = (sISO, eISO) => {
+    if (!sISO && !eISO) return { start: null, end: null, error: "" };
+    if (sISO && !eISO) return { start: sISO, end: new Date(new Date(sISO).getTime() + 30 * 60000).toISOString(), error: "" };
+    if (!sISO && eISO) return { start: new Date(new Date(eISO).getTime() - 30 * 60000).toISOString(), end: eISO, error: "" };
+    try {
+      const s = new Date(sISO);
+      const e = new Date(eISO);
+      if (e.getTime() < s.getTime()) {
+        return { start: s.toISOString(), end: new Date(s.getTime() + 30 * 60000).toISOString(), error: "End time must be after start time; adjusted to 30 minutes after start." };
+      }
+      return { start: s.toISOString(), end: e.toISOString(), error: "" };
+    } catch {
+      return { start: null, end: null, error: "Invalid time range." };
+    }
   };
 
   const cancelEdit = () => {
@@ -84,6 +138,11 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     setDueDraft(todo.dueDate ? toLocalDateInput(todo.dueDate) : "");
     setRepeatDraft(todo.repeat || "none");
     setRemindDraft(todo.remindAt || "");
+    setStartDate(todo.startTime ? toLocalDateInput(todo.startTime) : "");
+    setStartTime(todo.startTime ? toLocalTimeInput(todo.startTime) : "");
+    setEndDate(todo.endTime ? toLocalDateInput(todo.endTime) : (todo.startTime ? toLocalDateInput(todo.startTime) : ""));
+    setEndTime(todo.endTime ? toLocalTimeInput(todo.endTime) : "");
+    setTimeError("");
     setEditing(false);
   };
 
@@ -95,6 +154,17 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     if (!r || r === "none") return null;
     return r;
   };
+
+  const timeBadge = (() => {
+    if (!todo.startTime || !todo.endTime) return null;
+    const s = new Date(todo.startTime);
+    const e = new Date(todo.endTime);
+    const sh = String(s.getHours()).padStart(2, "0");
+    const sm = String(s.getMinutes()).padStart(2, "0");
+    const eh = String(e.getHours()).padStart(2, "0");
+    const em = String(e.getMinutes()).padStart(2, "0");
+    return `${sh}:${sm}–${eh}:${em}`;
+  })();
 
   const notes = Array.isArray(todo.notes) ? todo.notes : [];
   const noteCount = notes.length;
@@ -214,9 +284,48 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
                 style={{ maxWidth: 140 }}
               />
 
+              {/* Time blocking inline editing */}
+              <input
+                className="inline-input"
+                type="date"
+                aria-label="Edit start date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                style={{ maxWidth: 160 }}
+                title="Start date"
+              />
+              <input
+                className="inline-input"
+                type="time"
+                aria-label="Edit start time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                style={{ maxWidth: 140 }}
+                title="Start time"
+              />
+              <input
+                className="inline-input"
+                type="date"
+                aria-label="Edit end date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                style={{ maxWidth: 160 }}
+                title="End date"
+              />
+              <input
+                className="inline-input"
+                type="time"
+                aria-label="Edit end time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                style={{ maxWidth: 140 }}
+                title="End time"
+              />
+
               <button className="btn btn-small" onClick={confirmEdit} aria-label="Save edits">Save</button>
               <button className="icon-btn" onClick={cancelEdit} aria-label="Cancel edits" title="Cancel">✖️</button>
             </div>
+            {timeError ? <div role="status" aria-live="polite" style={{ color: "#EF4444", fontSize: 12 }}>{timeError}</div> : null}
           </div>
         ) : (
           <div
@@ -228,6 +337,7 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
             <div className="meta">
               <span className={`chip chip-cat ${category}`}>{category}</span>
               <span className={`chip chip-pri ${priority}`}>{priority}</span>
+              {timeBadge ? <span className="chip chip-due" title="Scheduled time">{timeBadge}</span> : null}
               {todo.dueDate ? (
                 <span className={`chip ${isOverdue ? "chip-overdue" : "chip-due"}`} title={`Due ${new Date(todo.dueDate).toLocaleString()}`}>
                   {isOverdue ? "Overdue" : "Due"}: {new Date(todo.dueDate).toLocaleDateString()}

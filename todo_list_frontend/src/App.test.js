@@ -10,15 +10,16 @@ test('renders app title and category filter', () => {
   expect(categoryFilter).toBeInTheDocument();
 });
 
-test('renders due filter control and productivity tabs', () => {
+test('renders due filter control and productivity tabs including Timeline', () => {
   render(<App />);
   const dueFilter = screen.getByLabelText(/Filter by due/i);
   expect(dueFilter).toBeInTheDocument();
 
-  // new tabs
+  // tabs
   expect(screen.getByRole('tab', { name: /All/i })).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /Today/i })).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /Weekly/i })).toBeInTheDocument();
+  expect(screen.getByRole('tab', { name: /Timeline/i })).toBeInTheDocument();
 });
 
 test('shows streak labels in header and Quick Notes present', () => {
@@ -62,4 +63,32 @@ test('pin control exists and pinned tasks appear first and notes button exists',
   // Check a notes button exists for items
   const notesButtons = screen.getAllByRole('button', { name: /notes/i });
   expect(notesButtons.length).toBeGreaterThan(0);
+});
+
+test('timeline grid renders and a time-blocked task appears as a block', () => {
+  render(<App />);
+  // switch to Timeline tab
+  fireEvent.click(screen.getByRole('tab', { name: /Timeline/i }));
+  // timeline region exists
+  expect(screen.getByRole('region', { name: /Timeline day view/i })).toBeInTheDocument();
+  // add a time blocked task
+  const taskInput = screen.getByLabelText(/New task/i);
+  fireEvent.change(taskInput, { target: { value: 'Timed Task' } });
+  // set start date/time quickly to today 10:00 -> 10:30 (defaults)
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, "0");
+  const d = String(today.getDate()).padStart(2, "0");
+  const dateStr = `${y}-${m}-${d}`;
+
+  const startDate = screen.getByLabelText(/Start date/i);
+  fireEvent.change(startDate, { target: { value: dateStr } });
+  const startTime = screen.getByLabelText(/Start time/i);
+  fireEvent.change(startTime, { target: { value: '10:00' } });
+
+  fireEvent.click(screen.getByLabelText(/Add task/i));
+  // block should render (button with role=button inside the timeline)
+  const timelineRegion = screen.getByRole('region', { name: /Scheduled tasks/i });
+  const buttons = timelineRegion.querySelectorAll('.timeline-block');
+  expect(buttons.length).toBeGreaterThan(0);
 });

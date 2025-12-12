@@ -3,12 +3,12 @@ import { useMemo, useState } from "react";
 /**
  * Input bar for adding a new todo.
  * Props:
- * - onAdd(title: string, category?: string, priority?: string, dueDate?: string|null, repeat?: 'none'|'daily'|'weekly'|'monthly', remindAt?: string|null): void
+ * - onAdd(title: string, category?: string, priority?: string, dueDate?: string|null, repeat?: 'none'|'daily'|'weekly'|'monthly', remindAt?: string|null, pinned?: boolean, startTime?: string|null, endTime?: string|null): void
  */
 
 // PUBLIC_INTERFACE
 export default function TodoInput({ onAdd }) {
-  /** Input component allowing users to add todos with Enter or button, including category, priority, due, repeat, reminder. */
+  /** Input component allowing users to add todos with Enter or button, including category, priority, due, repeat, reminder, and optional time blocking. */
   const [value, setValue] = useState("");
   const [category, setCategory] = useState("work");
   const [priority, setPriority] = useState("medium");
@@ -17,19 +17,79 @@ export default function TodoInput({ onAdd }) {
   const [remindAt, setRemindAt] = useState("");
   const [pinned, setPinned] = useState(false);
 
+  // time blocking inputs
+  const [startDate, setStartDate] = useState(""); // yyyy-mm-dd
+  const [startTime, setStartTime] = useState(""); // HH:MM
+  const [endDate, setEndDate] = useState("");     // optional; defaults to startDate
+  const [endTime, setEndTime] = useState("");     // HH:MM
+  const [timeError, setTimeError] = useState("");
+
   const reminderAllowed = useMemo(() => {
     return Boolean(dueDate) || repeat !== "none";
   }, [dueDate, repeat]);
+
+  const buildISO = (d, t) => {
+    if (!d || !t) return null;
+    try {
+      const [y, m, day] = d.split("-").map((s) => parseInt(s, 10));
+      const [hh, mm] = t.split(":").map((s) => parseInt(s, 10));
+      const dt = new Date(y, (m - 1), day, hh || 0, mm || 0, 0, 0);
+      return dt.toISOString();
+    } catch {
+      return null;
+    }
+  };
+
+  const validateTimes = (sISO, eISO) => {
+    if (!sISO && !eISO) {
+      setTimeError("");
+      return { start: null, end: null };
+    }
+    if (sISO && !eISO) {
+      const e = new Date(new Date(sISO).getTime() + 30 * 60000).toISOString();
+      setTimeError("");
+      return { start: sISO, end: e };
+    }
+    if (!sISO && eISO) {
+      const s = new Date(new Date(eISO).getTime() - 30 * 60000).toISOString();
+      setTimeError("");
+      return { start: s, end: eISO };
+    }
+    try {
+      const s = new Date(sISO);
+      const e = new Date(eISO);
+      if (e.getTime() < s.getTime()) {
+        setTimeError("End time must be after start time. Auto-adjusting to 30 minutes after start.");
+        const fixedEnd = new Date(s.getTime() + 30 * 60000).toISOString();
+        return { start: s.toISOString(), end: fixedEnd };
+      }
+      setTimeError("");
+      return { start: s.toISOString(), end: e.toISOString() };
+    } catch {
+      setTimeError("Invalid date/time format.");
+      return { start: null, end: null };
+    }
+  };
 
   const submit = () => {
     const v = value.trim();
     if (!v) return;
     const due = dueDate ? new Date(dueDate).toISOString() : null;
     const remind = reminderAllowed && remindAt ? remindAt : null;
-    onAdd(v, category, priority, due, repeat, remind, pinned);
+
+    const sISO = buildISO(startDate, startTime);
+    const eISO = buildISO(endDate || startDate, endTime);
+    const { start, end } = validateTimes(sISO, eISO);
+
+    onAdd(v, category, priority, due, repeat, remind, pinned, start, end);
     setValue("");
     setDueDate("");
     setRemindAt("");
+    setStartDate("");
+    setStartTime("");
+    setEndDate("");
+    setEndTime("");
+    setTimeError("");
     // keep last selected category/priority/repeat for convenience
   };
 
@@ -109,6 +169,52 @@ export default function TodoInput({ onAdd }) {
         style={{ maxWidth: 140 }}
         disabled={!reminderAllowed}
       />
+      {/* Time blocking controls */}
+      <label className="sr-only" htmlFor="tb-start-date">Start date</label>
+      <input
+        id="tb-start-date"
+        className="input"
+        type="date"
+        aria-label="Start date"
+        value={startDate}
+        onChange={(e) => setStartDate(e.target.value)}
+        title="Start Date"
+        style={{ maxWidth: 160 }}
+      />
+      <label className="sr-only" htmlFor="tb-start-time">Start time</label>
+      <input
+        id="tb-start-time"
+        className="input"
+        type="time"
+        aria-label="Start time"
+        value={startTime}
+        onChange={(e) => setStartTime(e.target.value)}
+        title="Start Time"
+        style={{ maxWidth: 140 }}
+      />
+      <label className="sr-only" htmlFor="tb-end-date">End date</label>
+      <input
+        id="tb-end-date"
+        className="input"
+        type="date"
+        aria-label="End date"
+        value={endDate}
+        onChange={(e) => setEndDate(e.target.value)}
+        title="End Date"
+        style={{ maxWidth: 160 }}
+      />
+      <label className="sr-only" htmlFor="tb-end-time">End time</label>
+      <input
+        id="tb-end-time"
+        className="input"
+        type="time"
+        aria-label="End time"
+        value={endTime}
+        onChange={(e) => setEndTime(e.target.value)}
+        title="End Time"
+        style={{ maxWidth: 140 }}
+      />
+      {timeError ? <div role="status" aria-live="polite" style={{ color: "#EF4444", fontSize: 12 }}>{timeError}</div> : null}
       <label className="pin-toggle" title="Pin task">
         <input
           type="checkbox"

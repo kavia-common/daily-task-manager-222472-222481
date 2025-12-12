@@ -8,6 +8,8 @@ import DailyView from './components/DailyView';
 import WeeklySummary from './components/WeeklySummary';
 import { useTodos } from './hooks/useTodos';
 import QuickNotesPanel from './components/QuickNotesPanel';
+import DayTimeline from './components/DayTimeline';
+import { tasksForDay as selectorTasksForDay } from './hooks/useTodos';
 
 // PUBLIC_INTERFACE
 function App() {
@@ -54,7 +56,14 @@ function App() {
   const [notesOnly, setNotesOnly] = useState(false); // quick filter chip
 
   // Tabs
-  const [tab, setTab] = useState('all'); // 'all' | 'today' | 'weekly'
+  const [tab, setTab] = useState('all'); // 'all' | 'today' | 'weekly' | 'timeline'
+  const [timelineDate, setTimelineDate] = useState(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  });
 
   const withinSameDay = (iso) => {
     if (!iso) return false;
@@ -163,6 +172,12 @@ function App() {
             className={`tab ${tab === 'weekly' ? 'active' : ''}`}
             onClick={() => setTab('weekly')}
           >Weekly</button>
+          <button
+            role="tab"
+            aria-selected={tab === 'timeline'}
+            className={`tab ${tab === 'timeline' ? 'active' : ''}`}
+            onClick={() => setTab('timeline')}
+          >Timeline</button>
         </div>
 
         {/* Notification/Toast area */}
@@ -286,6 +301,90 @@ function App() {
             onDelete={deleteTodo}
             onUpdate={updateTodo}
           />
+        ) : tab === 'timeline' ? (
+          <div className="timeline-tab" role="region" aria-label="Timeline day view">
+            <div className="daily-toolbar">
+              <div className="daily-progress">
+                <div className="daily-progress-bar">
+                  <div className="daily-progress-fill" style={{ width: `${Math.round((todayTotals?.rate || 0) * 100)}%` }} />
+                </div>
+                <div className="daily-progress-meta">Day timeline</div>
+              </div>
+              <div className="daily-quickadd" role="group" aria-label="Timeline date controls">
+                <label className="sr-only" htmlFor="tl-date">Select date</label>
+                <input
+                  id="tl-date"
+                  className="input"
+                  type="date"
+                  aria-label="Select date"
+                  value={timelineDate}
+                  onChange={(e) => setTimelineDate(e.target.value)}
+                  style={{ maxWidth: 180 }}
+                />
+                <button
+                  className="btn btn-small"
+                  onClick={() => {
+                    const d = new Date();
+                    const y = d.getFullYear();
+                    const m = String(d.getMonth() + 1).padStart(2, "0");
+                    const day = String(d.getDate()).padStart(2, "0");
+                    setTimelineDate(`${y}-${m}-${day}`);
+                  }}
+                  aria-label="Jump to today"
+                  title="Today"
+                >
+                  Today
+                </button>
+              </div>
+            </div>
+            {(() => {
+              // prepare filtered tasks for selected date based on existing filters
+              const dateObj = timelineDate ? new Date(timelineDate) : new Date();
+              const tasksFiltered = selectorTasksForDay(
+                filteredTodos, // already applies category/priority/due/notes/pinned ordering
+                dateObj,
+                { category: categoryFilter, priority: priorityFilter, due: dueFilter, notesOnly }
+              );
+              const conflicts = new Set(
+                // naive conflicts by scanning filtered list
+                (() => {
+                  const ids = new Set();
+                  for (let i = 0; i < tasksFiltered.length; i++) {
+                    const a = tasksFiltered[i];
+                    if (!a.startTime || !a.endTime) continue;
+                    for (let j = i + 1; j < tasksFiltered.length; j++) {
+                      const b = tasksFiltered[j];
+                      if (!b.startTime || !b.endTime) continue;
+                      const as = new Date(a.startTime).getTime();
+                      const ae = new Date(a.endTime).getTime();
+                      const bs = new Date(b.startTime).getTime();
+                      const be = new Date(b.endTime).getTime();
+                      if (Math.max(as, bs) < Math.min(ae, be)) {
+                        ids.add(a.id); ids.add(b.id);
+                      }
+                    }
+                  }
+                  return Array.from(ids);
+                })()
+              );
+              return (
+                <DayTimeline
+                  date={dateObj}
+                  tasks={tasksFiltered}
+                  conflictIds={conflicts}
+                  onSelectTask={(id) => {
+                    // focus task in list by scrolling into view if present
+                    const esc = (s) => (window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(s) : String(s).replace(/"/g, '\\"'));
+                    const title = tasksFiltered.find(t=>t.id===id)?.title || "";
+                    const el = document.querySelector(`[aria-label="Task ${esc(title)}"]`);
+                    if (el && typeof el.scrollIntoView === "function") {
+                      el.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                  }}
+                />
+              );
+            })()}
+          </div>
         ) : (
           <TodoList
             todos={filteredTodos}

@@ -1,7 +1,8 @@
-/**
+ /**
  * useTodos hook manages to-do items with localStorage persistence by default.
  * If a backend is configured (via env), it attempts to sync with it but falls back gracefully.
  * Adds reminders, due dates, repeat schedules, in-app notifications, and productivity stats.
+ * Now extended with time blocking: startTime/endTime fields, timeline helpers, overlap detection.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiBase } from "../utils/api";
@@ -10,25 +11,35 @@ const STORAGE_KEY = "todos_ocean_pro";
 const STATS_KEY = "todo_stats_v1";
 const QUICK_NOTES_KEY = "quick_notes_v1";
 
+const FIVE_MIN = 5 * 60 * 1000;
+
 // Helpers for local persistence
 function ensureDefaults(list) {
   // Backward compatibility: default missing fields (including new 'pinned' flag and notes array)
-  return (Array.isArray(list) ? list : []).map((t) => ({
-    ...t,
-    category: t.category || "work",
-    priority: t.priority || "medium",
-    dueDate: typeof t.dueDate === "string" || t.dueDate === null ? t.dueDate : null,
-    repeat: t.repeat || "none",
-    remindAt: typeof t.remindAt === "string" || t.remindAt === null ? t.remindAt : null,
-    lastNotifiedAt: t.lastNotifiedAt || null,
-    // new metadata fields (backward compatible)
-    completedAt: typeof t.completedAt === "string" || t.completedAt === null ? t.completedAt ?? null : null,
-    createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
-    // new pin flag
-    pinned: typeof t.pinned === "boolean" ? t.pinned : false,
-    // new notes array
-    notes: Array.isArray(t.notes) ? t.notes : [],
-  }));
+  return (Array.isArray(list) ? list : []).map((t) => {
+    const startTime = typeof t.startTime === "string" ? t.startTime : null;
+    const endTime = typeof t.endTime === "string" ? t.endTime : null;
+    const normalized = normalizeTimeRange(startTime, endTime);
+    return ({
+      ...t,
+      category: t.category || "work",
+      priority: t.priority || "medium",
+      dueDate: typeof t.dueDate === "string" || t.dueDate === null ? t.dueDate : null,
+      repeat: t.repeat || "none",
+      remindAt: typeof t.remindAt === "string" || t.remindAt === null ? t.remindAt : null,
+      lastNotifiedAt: t.lastNotifiedAt || null,
+      // new metadata fields (backward compatible)
+      completedAt: typeof t.completedAt === "string" || t.completedAt === null ? (t.completedAt ?? null) : null,
+      createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
+      // new pin flag
+      pinned: typeof t.pinned === "boolean" ? t.pinned : false,
+      // new notes array
+      notes: Array.isArray(t.notes) ? t.notes : [],
+      // time blocking (start/end ISO or null)
+      startTime: normalized.startTime,
+      endTime: normalized.endTime,
+    });
+  });
 }
 
 function loadLocal() {
@@ -187,9 +198,162 @@ function stdDev(arr) {
   return Math.sqrt(variance);
 }
 
+// Time blocking helpers
+// PUBLIC_INTERFACE
+export function isTimeBlocked(task) {
+  /** Returns true if task has both startTime and endTime ISO strings. */
+  return !!(task && typeof task.startTime === "string" && typeof task.endTime === "string");
+}
+
+// PUBLIC_INTERFACE
+export function normalizeTimeRange(startTime, endTime) {
+  /** Ensures both times are either null or valid ISO and end >= start; auto-fix if needed. */
+  if (!startTime && !endTime) return { startTime: null, endTime: null };
+  try {
+    const s = startTime ? new Date(startTime) : null;
+    const e = endTime ? new Date(endTime) : null;
+    if (!s && e) {
+      // if only end provided, set start = end - 30min
+      const start = new Date(e.getTime() - 30 * 60000);
+      return { startTime: start.toISOString(), endTime: e.toISOString() };
+    } else if (s && !e) {
+      // only start provided -> default 30 minutes
+      const end = new Date(s.getTime() + 30 * 60000);
+      return { startTime: s.toISOString(), endTime: end.toISOString() };
+    } else if (s && e) {
+      if (e.getTime() < s.getTime()) {
+        // swap or adjust to 30min after
+        const end = new Date(s.getTime() + 30 * 60000);
+        return { startTime: s.toISOString(), endTime: end.toISOString() };
+      }
+      return { startTime: s.toISOString(), endTime: e.toISOString() };
+    }
+  } catch {
+    return { startTime: null, endTime: null };
+  }
+  return { startTime: null, endTime: null };
+}
+
+// PUBLIC_INTERFACE
+export function overlaps(a, b) {
+  /** Returns true if two tasks with start/end overlap in time. */
+  if (!isTimeBlocked(a) || !isTimeBlocked(b)) return false;
+  const as = new Date(a.startTime).getTime();
+  const ae = new Date(a.endTime).getTime();
+  const bs = new Date(b.startTime).getTime();
+  const be = new Date(b.endTime).getTime();
+  return Math.max(as, bs) < Math.min(ae, be);
+}
+
+// PUBLIC_INTERFACE
+export function getTasksForDate(list, date) {
+  /** Returns tasks scheduled (startTime on the given date) with normalized ranges. */
+  const key = toKey(date);
+  return (Array.isArray(list) ? list : []).filter((t) => {
+    if (!t.startTime) return false;
+    try {
+      const d = new Date(t.startTime);
+      return toKey(d) === key;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// PUBLIC_INTERFACE
+export function snapToFiveMinutes(iso) {
+  /** Snap a datetime ISO string to nearest 5-minute increment for consistent rendering. */
+  try {
+    const d = new Date(iso);
+    const ms = d.getTime();
+    const snapped = Math.round(ms / FIVE_MIN) * FIVE_MIN;
+    const out = new Date(snapped);
+    return out.toISOString();
+  } catch {
+    return iso;
+  }
+}
+
+// PUBLIC_INTERFACE
+export function tasksForDay(list, date, filters) {
+  /** Returns filtered tasks for a day respecting provided filters (category, priority, due, notes, completion). */
+  const key = toKey(date);
+  const {
+    category = "all",
+    priority = "all",
+    due = "all",
+    notesOnly = false,
+  } = (filters || {});
+
+  const withinSameDay = (iso) => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    return d.getFullYear() === day.getFullYear() &&
+      d.getMonth() === day.getMonth() &&
+      d.getDate() === day.getDate();
+  };
+  const withinThisWeek = (iso) => {
+    if (!iso) return false;
+    const target = new Date(iso);
+    const now = date;
+    const oneDay = 86400000;
+    const dayOfWeek = now.getDay();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(start.getTime() - dayOfWeek * oneDay);
+    const weekEnd = new Date(weekStart.getTime() + 7 * oneDay);
+    return target >= weekStart && target < weekEnd;
+  };
+  const isOverdue = (iso, completed) => {
+    if (!iso || completed) return false;
+    return new Date() > new Date(iso);
+  };
+
+  return (Array.isArray(list) ? list : [])
+    .filter((t) => {
+      // belongs to day if either startTime is that day or dueDate filter requests different slice later
+      let belongs = t.startTime && toKey(new Date(t.startTime)) === key;
+      // if no time blocking, still allow due-based membership when viewing a day
+      if (!belongs && t.dueDate && withinSameDay(t.dueDate)) {
+        belongs = true;
+      }
+      if (!belongs) return false;
+
+      const tCat = t.category || "work";
+      const tPri = t.priority || "medium";
+      const okCat = category === "all" ? true : tCat === category;
+      const okPri = priority === "all" ? true : tPri === priority;
+
+      let okDue = true;
+      if (due === "today") okDue = !!t.dueDate && withinSameDay(t.dueDate);
+      else if (due === "week") okDue = !!t.dueDate && withinThisWeek(t.dueDate);
+      else if (due === "overdue") okDue = isOverdue(t.dueDate, t.completed);
+
+      const okNotes = notesOnly ? Array.isArray(t.notes) && t.notes.length > 0 : true;
+      return okCat && okPri && okDue && okNotes;
+    });
+}
+
+// PUBLIC_INTERFACE
+export function detectConflicts(list) {
+  /** Returns a Set of taskIds that have overlapping time ranges among time-blocked tasks. */
+  const conflicts = new Set();
+  const timeTasks = (Array.isArray(list) ? list : []).filter(isTimeBlocked);
+  for (let i = 0; i < timeTasks.length; i++) {
+    for (let j = i + 1; j < timeTasks.length; j++) {
+      if (toKey(new Date(timeTasks[i].startTime)) !== toKey(new Date(timeTasks[j].startTime))) continue;
+      if (overlaps(timeTasks[i], timeTasks[j])) {
+        conflicts.add(timeTasks[i].id);
+        conflicts.add(timeTasks[j].id);
+      }
+    }
+  }
+  return conflicts;
+}
+
 // PUBLIC_INTERFACE
 export function useTodos() {
-  /** Hook that exposes todos state, notifications, CRUD actions, and productivity stats. */
+  /** Hook that exposes todos state, notifications, CRUD actions, productivity stats, and time blocking helpers. */
   const [todos, setTodos] = useState(() => loadLocal());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -375,8 +539,10 @@ export function useTodos() {
   }
 
   // Actions
-  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false) => {
+  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false, startTime = null, endTime = null) => {
     const nowIso = new Date().toISOString();
+    // snap optional times
+    const norm = normalizeTimeRange(startTime, endTime);
     const baseTodo = {
       id: generateLocalId(),
       title: String(title).trim(),
@@ -390,6 +556,9 @@ export function useTodos() {
       lastNotifiedAt: null,
       completedAt: null,
       pinned: !!pinned,
+      startTime: norm.startTime,
+      endTime: norm.endTime,
+      notes: [],
     };
     // optimistic update
     setTodos((prev) => [baseTodo, ...prev]);
@@ -408,10 +577,10 @@ export function useTodos() {
           lastNotifiedAt: baseTodo.lastNotifiedAt,
           createdAt: baseTodo.createdAt,
           completedAt: baseTodo.completedAt,
-          // include pinned; backend may ignore it safely
           pinned: baseTodo.pinned,
-          // include notes if provided in future; new tasks start empty here
           notes: [],
+          startTime: baseTodo.startTime,
+          endTime: baseTodo.endTime,
         });
         if (created && created.id) {
           // reconcile: replace local id with server id
@@ -427,11 +596,22 @@ export function useTodos() {
   }, [hasBackend]);
 
   const updateTodo = useCallback(async (id, updates) => {
-    // ensure defaults on updates & avoid removing completedAt unintentionally
-    const normalized = ensureDefaults([updates])[0];
+    // normalize time updates if present
+    let timePatched = {};
+    if ("startTime" in updates || "endTime" in updates) {
+      const norm = normalizeTimeRange(updates.startTime ?? null, updates.endTime ?? null);
+      timePatched = { startTime: norm.startTime, endTime: norm.endTime };
+    }
+    const normalized = ensureDefaults([{ ...updates, ...timePatched }])[0];
     // keep pinned strictly boolean if provided
     if (typeof updates.pinned !== "undefined") {
       normalized.pinned = !!updates.pinned;
+    }
+    if (typeof normalized.startTime === "string") {
+      normalized.startTime = snapToFiveMinutes(normalized.startTime);
+    }
+    if (typeof normalized.endTime === "string") {
+      normalized.endTime = snapToFiveMinutes(normalized.endTime);
     }
     setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...normalized } : t)));
     if (hasBackend) {
@@ -523,7 +703,8 @@ export function useTodos() {
     return (todos || []).filter((t) => {
       const createdToday = t.createdAt && isSameLocalDate(new Date(t.createdAt), now);
       const dueToday = t.dueDate && isSameLocalDate(new Date(t.dueDate), now);
-      return createdToday || dueToday;
+      const startToday = t.startTime && isSameLocalDate(new Date(t.startTime), now);
+      return createdToday || dueToday || startToday;
     });
   }, [todos]);
 
@@ -693,6 +874,14 @@ export function useTodos() {
     }));
   }, []);
 
+  // Selectors for timeline
+  // PUBLIC_INTERFACE
+  const conflictsForSelected = useCallback((date, filters) => {
+    /** Returns Set of conflicting task IDs for a given day and filter set. */
+    const dayTasks = tasksForDay(todos, date, filters);
+    return detectConflicts(dayTasks);
+  }, [todos]);
+
   return {
     todos: sortPinnedFirst(todos),
     loading,
@@ -726,7 +915,7 @@ export function useTodos() {
     stats,
     /** Aggregate stats for today. */
     todayStats,
-    /** All tasks that are due today or created today. */
+    /** All tasks that are due today or created today (or start today). */
     todaysTodos,
     /** Today totals with completion rate. */
     todayTotals,
@@ -738,5 +927,15 @@ export function useTodos() {
     /** Productivity scores for today and week. */
     todayScore,
     weekScore,
+
+    // Time blocking helpers/selectors
+    /** Utility: normalize a time range object. */
+    normalizeTimeRange,
+    /** Utility: snap a time ISO string to nearest 5 minutes. */
+    snapToFiveMinutes,
+    /** Selector: tasks scheduled for a given date with filters. */
+    tasksForDay: (date, filters) => tasksForDay(todos, date, filters),
+    /** Conflict detection: Set of IDs overlapping among tasks for date/filters. */
+    conflictsForSelected,
   };
 }
