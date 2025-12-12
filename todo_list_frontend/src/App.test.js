@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import App from './App';
 
 test('renders app title and category filter', () => {
@@ -26,4 +26,34 @@ test('shows streak labels in header', () => {
   // streak chips
   expect(screen.getByText(/Current Streak/i)).toBeInTheDocument();
   expect(screen.getByText(/Best/i)).toBeInTheDocument();
+});
+
+test('pin control exists and pinned tasks appear first', () => {
+  render(<App />);
+  // Add two tasks
+  const input = screen.getByLabelText(/New task/i);
+  fireEvent.change(input, { target: { value: 'Task A' } });
+  // check Pin task and add
+  const pinCheckbox = screen.getByLabelText(/Pin task on creation/i);
+  fireEvent.click(pinCheckbox);
+  fireEvent.click(screen.getByLabelText(/Add task/i));
+
+  // Add second task not pinned
+  fireEvent.change(input, { target: { value: 'Task B' } });
+  // uncheck pin if still checked
+  const pinCheckbox2 = screen.getByLabelText(/Pin task on creation/i);
+  if (pinCheckbox2.checked) fireEvent.click(pinCheckbox2);
+  fireEvent.click(screen.getByLabelText(/Add task/i));
+
+  // Should render a list where Task A appears before Task B
+  const list = screen.getByRole('list', { name: /Tasks list/i });
+  const items = Array.from(list.querySelectorAll('.item .title'));
+  expect(items.length).toBeGreaterThanOrEqual(2);
+  const titles = items.map((n) => n.textContent);
+  // First contains Task A before Task B
+  const idxA = titles.findIndex(t => t.includes('Task A'));
+  const idxB = titles.findIndex(t => t.includes('Task B'));
+  expect(idxA).toBeGreaterThanOrEqual(0);
+  expect(idxB).toBeGreaterThanOrEqual(0);
+  expect(idxA).toBeLessThan(idxB);
 });

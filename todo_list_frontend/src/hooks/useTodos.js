@@ -11,7 +11,7 @@ const STATS_KEY = "todo_stats_v1";
 
 // Helpers for local persistence
 function ensureDefaults(list) {
-  // Backward compatibility: default missing fields
+  // Backward compatibility: default missing fields (including new 'pinned' flag)
   return (Array.isArray(list) ? list : []).map((t) => ({
     ...t,
     category: t.category || "work",
@@ -23,6 +23,8 @@ function ensureDefaults(list) {
     // new metadata fields (backward compatible)
     completedAt: typeof t.completedAt === "string" || t.completedAt === null ? t.completedAt ?? null : null,
     createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
+    // new pin flag
+    pinned: typeof t.pinned === "boolean" ? t.pinned : false,
   }));
 }
 
@@ -331,7 +333,7 @@ export function useTodos() {
   }
 
   // Actions
-  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null) => {
+  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false) => {
     const nowIso = new Date().toISOString();
     const baseTodo = {
       id: generateLocalId(),
@@ -345,6 +347,7 @@ export function useTodos() {
       remindAt: remindAt || null,
       lastNotifiedAt: null,
       completedAt: null,
+      pinned: !!pinned,
     };
     // optimistic update
     setTodos((prev) => [baseTodo, ...prev]);
@@ -363,6 +366,8 @@ export function useTodos() {
           lastNotifiedAt: baseTodo.lastNotifiedAt,
           createdAt: baseTodo.createdAt,
           completedAt: baseTodo.completedAt,
+          // include pinned; backend may ignore it safely
+          pinned: baseTodo.pinned,
         });
         if (created && created.id) {
           // reconcile: replace local id with server id
@@ -380,6 +385,10 @@ export function useTodos() {
   const updateTodo = useCallback(async (id, updates) => {
     // ensure defaults on updates & avoid removing completedAt unintentionally
     const normalized = ensureDefaults([updates])[0];
+    // keep pinned strictly boolean if provided
+    if (typeof updates.pinned !== "undefined") {
+      normalized.pinned = !!updates.pinned;
+    }
     setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...normalized } : t)));
     if (hasBackend) {
       try {
@@ -510,8 +519,19 @@ export function useTodos() {
   const weekAvgRate = weekRates.reduce((a, b) => a + b, 0) / (weekRates.length || 1);
   const weekScore = Math.round((weekAvgRate * 70) + (streakFactor * 20) + (consistencyFactor * 10));
 
+  // Sorter to place pinned items at the top while preserving relative order otherwise
+  function sortPinnedFirst(list) {
+    const arr = Array.isArray(list) ? [...list] : [];
+    return arr.sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap; // pinned first
+      return 0;
+    });
+  }
+
   return {
-    todos,
+    todos: sortPinnedFirst(todos),
     loading,
     error,
     addTodo,

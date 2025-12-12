@@ -88,13 +88,26 @@ function App() {
 
       return okCat && okPri && okDue;
     });
+
+    // Apply existing priority sort within groups while ensuring pinned first
+    const pinSort = (a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return 0;
+    };
+
     if (prioritySort !== 'none') {
       const weight = { high: 3, medium: 2, low: 1 };
       items = [...items].sort((a, b) => {
+        const pinCmp = pinSort(a, b);
+        if (pinCmp !== 0) return pinCmp;
         const aw = weight[a.priority || 'medium'];
         const bw = weight[b.priority || 'medium'];
         return prioritySort === 'high-first' ? bw - aw : aw - bw;
       });
+    } else {
+      items = [...items].sort(pinSort);
     }
     return items;
   }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab]);

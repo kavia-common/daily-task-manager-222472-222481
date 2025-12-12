@@ -192,11 +192,22 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
               {todo.remindAt ? (
                 <span className="chip chip-remind" title={`Reminds at ${todo.remindAt}`}>⏰ {todo.remindAt}</span>
               ) : null}
+              {todo.pinned ? (
+                <span className="chip chip-pin" title="Pinned task" aria-label="Pinned task">⭐ Pinned</span>
+              ) : null}
             </div>
           </div>
         )}
       </div>
       <div className="actions" aria-label="Item actions">
+        <button
+          className={`icon-btn ${todo.pinned ? 'pin-active' : ''}`}
+          onClick={() => onUpdate(todo.id, { pinned: !todo.pinned })}
+          aria-label={todo.pinned ? "Unpin task" : "Pin task"}
+          title={todo.pinned ? "Unpin" : "Pin"}
+        >
+          {todo.pinned ? "⭐" : "☆"}
+        </button>
         <button
           className="icon-btn"
           onClick={() => setEditing((v) => !v)}

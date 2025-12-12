@@ -421,6 +421,42 @@ body {
   border-color: rgba(239,68,68,0.3);
 }
 
+/* Pin control */
+.icon-btn.pin-active, .icon-btn.pin-active:hover {
+  background: rgba(245,158,11,0.12);
+  border-color: rgba(245,158,11,0.5);
+  color: #8a5800;
+}
+
+.chip-pin {
+  border-color: rgba(245,158,11,0.55);
+  background: rgba(245,158,11,0.12);
+  color: #8a5800;
+}
+
+/* Pin toggle in input */
+.pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 44px;
+  border: 1px dashed rgba(245,158,11,0.45);
+  border-radius: 10px;
+  background: rgba(245,158,11,0.06);
+  color: #8a5800;
+}
+.pin-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-secondary);
+  cursor: pointer;
+}
+.pin-toggle .pin-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* Chips / badges */
 .chip {
   display: inline-flex;

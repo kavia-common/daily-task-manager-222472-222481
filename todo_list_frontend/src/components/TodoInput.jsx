@@ -15,6 +15,7 @@ export default function TodoInput({ onAdd }) {
   const [dueDate, setDueDate] = useState("");
   const [repeat, setRepeat] = useState("none");
   const [remindAt, setRemindAt] = useState("");
+  const [pinned, setPinned] = useState(false);
 
   const reminderAllowed = useMemo(() => {
     return Boolean(dueDate) || repeat !== "none";
@@ -25,7 +26,7 @@ export default function TodoInput({ onAdd }) {
     if (!v) return;
     const due = dueDate ? new Date(dueDate).toISOString() : null;
     const remind = reminderAllowed && remindAt ? remindAt : null;
-    onAdd(v, category, priority, due, repeat, remind);
+    onAdd(v, category, priority, due, repeat, remind, pinned);
     setValue("");
     setDueDate("");
     setRemindAt("");
@@ -108,6 +109,15 @@ export default function TodoInput({ onAdd }) {
         style={{ maxWidth: 140 }}
         disabled={!reminderAllowed}
       />
+      <label className="pin-toggle" title="Pin task">
+        <input
+          type="checkbox"
+          checked={pinned}
+          onChange={(e) => setPinned(e.target.checked)}
+          aria-label="Pin task on creation"
+        />
+        <span className="pin-label">⭐ Pin task</span>
+      </label>
       <button className="btn" onClick={submit} aria-label="Add task">
         Add
       </button>
