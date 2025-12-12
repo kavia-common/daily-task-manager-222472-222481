@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
+import TaskNotes from "./TaskNotes";
+import NotesBadge from "./NotesBadge";
 
 /**
- * Renders a single todo item with checkbox toggle, inline edit, and delete.
+ * Renders a single todo item with checkbox toggle, inline edit, delete, and per-task notes.
  * Props:
- * - todo: { id, title, completed, category?, priority?, dueDate?: string|null, repeat?: string, remindAt?: string|null, lastNotifiedAt?: string|null }
+ * - todo: { id, title, completed, category?, priority?, dueDate?: string|null, repeat?: string, remindAt?: string|null, lastNotifiedAt?: string|null, notes?: [] }
  * - onToggle(id)
  * - onDelete(id)
  * - onUpdate(id, updates)
+ * - notes handlers are passed via onUpdate using taskId, see TaskNotes usage
  */
 
 // PUBLIC_INTERFACE
 export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
-  /** Todo item component with inline editing support including due/repeat/remindAt. */
+  /** Todo item component with inline editing support including due/repeat/remindAt and notes expando. */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(todo.title);
   const [catDraft, setCatDraft] = useState(todo.category || "work");
@@ -20,6 +23,7 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
   const [repeatDraft, setRepeatDraft] = useState(todo.repeat || "none");
   const [remindDraft, setRemindDraft] = useState(todo.remindAt || "");
   const inputRef = useRef(null);
+  const [showNotes, setShowNotes] = useState(false);
 
   function toLocalDateInput(iso) {
     const d = new Date(iso);
@@ -90,6 +94,49 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
   const repeatLabel = (r) => {
     if (!r || r === "none") return null;
     return r;
+  };
+
+  const notes = Array.isArray(todo.notes) ? todo.notes : [];
+  const noteCount = notes.length;
+
+  // Handlers to update task notes by calling onUpdate with a new notes array
+  const addNote = (taskId, note) => {
+    const arr = Array.isArray(todo.notes) ? [...todo.notes] : [];
+    arr.unshift(note);
+    onUpdate(taskId, { notes: arr });
+  };
+  const updateNote = (taskId, noteId, patch) => {
+    const arr = (Array.isArray(todo.notes) ? todo.notes : []).map(n => n.id === noteId ? { ...n, ...patch } : n);
+    onUpdate(taskId, { notes: arr });
+  };
+  const deleteNote = (taskId, noteId) => {
+    const arr = (Array.isArray(todo.notes) ? todo.notes : []).filter(n => n.id !== noteId);
+    onUpdate(taskId, { notes: arr });
+  };
+  const addChecklistItem = (taskId, noteId, itemText) => {
+    const arr = (Array.isArray(todo.notes) ? todo.notes : []).map(n => {
+      if (n.id !== noteId) return n;
+      const items = Array.isArray(n.items) ? [...n.items] : [];
+      const item = { id: `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`, text: itemText, done: false };
+      return { ...n, checklist: true, items: [...items, item], updatedAt: new Date().toISOString() };
+    });
+    onUpdate(taskId, { notes: arr });
+  };
+  const toggleChecklistItem = (taskId, noteId, itemId) => {
+    const arr = (Array.isArray(todo.notes) ? todo.notes : []).map(n => {
+      if (n.id !== noteId) return n;
+      const items = (n.items || []).map(it => it.id === itemId ? ({ ...it, done: !it.done }) : it);
+      return { ...n, items, updatedAt: new Date().toISOString() };
+    });
+    onUpdate(taskId, { notes: arr });
+  };
+  const deleteChecklistItem = (taskId, noteId, itemId) => {
+    const arr = (Array.isArray(todo.notes) ? todo.notes : []).map(n => {
+      if (n.id !== noteId) return n;
+      const items = (n.items || []).filter(it => it.id !== itemId);
+      return { ...n, items, updatedAt: new Date().toISOString() };
+    });
+    onUpdate(taskId, { notes: arr });
   };
 
   return (
@@ -210,6 +257,16 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
         </button>
         <button
           className="icon-btn"
+          onClick={() => setShowNotes(v => !v)}
+          aria-label={showNotes ? "Hide notes" : "Show notes"}
+          aria-expanded={showNotes}
+          title="Notes"
+        >
+          📝
+        </button>
+        <NotesBadge count={noteCount} onClick={() => setShowNotes(true)} />
+        <button
+          className="icon-btn"
           onClick={() => setEditing((v) => !v)}
           aria-label={editing ? "Finish editing" : "Edit task"}
           title={editing ? "Finish editing" : "Edit"}
@@ -225,6 +282,20 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
           🗑️
         </button>
       </div>
+      {showNotes && (
+        <div className="notes-expando" role="region" aria-label="Task notes area">
+          <TaskNotes
+            task={{ ...todo, notes }}
+            onAddNote={addNote}
+            onUpdateNote={updateNote}
+            onDeleteNote={deleteNote}
+            onAddChecklistItem={addChecklistItem}
+            onToggleChecklistItem={toggleChecklistItem}
+            onDeleteChecklistItem={deleteChecklistItem}
+            onClose={() => setShowNotes(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }

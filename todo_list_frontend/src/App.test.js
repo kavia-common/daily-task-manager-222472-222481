@@ -21,14 +21,16 @@ test('renders due filter control and productivity tabs', () => {
   expect(screen.getByRole('tab', { name: /Weekly/i })).toBeInTheDocument();
 });
 
-test('shows streak labels in header', () => {
+test('shows streak labels in header and Quick Notes present', () => {
   render(<App />);
   // streak chips
   expect(screen.getByText(/Current Streak/i)).toBeInTheDocument();
   expect(screen.getByText(/Best/i)).toBeInTheDocument();
+  // quick notes section header
+  expect(screen.getByText(/Quick Notes/i)).toBeInTheDocument();
 });
 
-test('pin control exists and pinned tasks appear first', () => {
+test('pin control exists and pinned tasks appear first and notes button exists', () => {
   render(<App />);
   // Add two tasks
   const input = screen.getByLabelText(/New task/i);
@@ -56,4 +58,8 @@ test('pin control exists and pinned tasks appear first', () => {
   expect(idxA).toBeGreaterThanOrEqual(0);
   expect(idxB).toBeGreaterThanOrEqual(0);
   expect(idxA).toBeLessThan(idxB);
+
+  // Check a notes button exists for items
+  const notesButtons = screen.getAllByRole('button', { name: /notes/i });
+  expect(notesButtons.length).toBeGreaterThan(0);
 });

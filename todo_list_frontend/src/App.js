@@ -7,6 +7,7 @@ import ProductivityHeader from './components/ProductivityHeader';
 import DailyView from './components/DailyView';
 import WeeklySummary from './components/WeeklySummary';
 import { useTodos } from './hooks/useTodos';
+import QuickNotesPanel from './components/QuickNotesPanel';
 
 // PUBLIC_INTERFACE
 function App() {
@@ -34,11 +35,23 @@ function App() {
     todayScore,
   } = useTodos();
 
+  // quick notes from hook
+  const {
+    quickNotes,
+    addQuickNote,
+    updateQuickNote,
+    deleteQuickNote,
+    addQuickChecklistItem,
+    toggleQuickChecklistItem,
+    deleteQuickChecklistItem,
+  } = useTodos();
+
   // Filters and sorting
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [prioritySort, setPrioritySort] = useState('none'); // 'none' | 'high-first' | 'low-first'
   const [dueFilter, setDueFilter] = useState('all'); // 'all' | 'today' | 'week' | 'overdue'
+  const [notesOnly, setNotesOnly] = useState(false); // quick filter chip
 
   // Tabs
   const [tab, setTab] = useState('all'); // 'all' | 'today' | 'weekly'
@@ -86,7 +99,8 @@ function App() {
       else if (due === 'week') okDue = !!t.dueDate && withinThisWeek(t.dueDate);
       else if (due === 'overdue') okDue = isOverdue(t.dueDate, t.completed);
 
-      return okCat && okPri && okDue;
+      const okNotes = notesOnly ? Array.isArray(t.notes) && t.notes.length > 0 : true;
+      return okCat && okPri && okDue && okNotes;
     });
 
     // Apply existing priority sort within groups while ensuring pinned first
@@ -162,6 +176,17 @@ function App() {
           ))}
         </div>
 
+        {/* Quick Notes */}
+        <QuickNotesPanel
+          notes={quickNotes}
+          addQuickNote={addQuickNote}
+          updateQuickNote={updateQuickNote}
+          deleteQuickNote={deleteQuickNote}
+          addQuickChecklistItem={addQuickChecklistItem}
+          toggleQuickChecklistItem={toggleQuickChecklistItem}
+          deleteQuickChecklistItem={deleteQuickChecklistItem}
+        />
+
         <TodoInput onAdd={addTodo} />
 
         <div className="filters" aria-label="Task filters">
@@ -227,6 +252,18 @@ function App() {
               <option value="week">This Week</option>
               <option value="overdue">Overdue</option>
             </select>
+          </div>
+
+          <div className="filter-group" style={{ alignSelf: "center" }}>
+            <button
+              className={`chip ${notesOnly ? "chip-selected" : ""}`}
+              aria-pressed={notesOnly}
+              onClick={() => setNotesOnly(v => !v)}
+              aria-label="Filter tasks that have notes"
+              title="Filter: Notes"
+            >
+              📝 Notes
+            </button>
           </div>
         </div>
 

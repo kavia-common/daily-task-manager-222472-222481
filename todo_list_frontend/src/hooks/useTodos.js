@@ -8,10 +8,11 @@ import { api, getApiBase } from "../utils/api";
 
 const STORAGE_KEY = "todos_ocean_pro";
 const STATS_KEY = "todo_stats_v1";
+const QUICK_NOTES_KEY = "quick_notes_v1";
 
 // Helpers for local persistence
 function ensureDefaults(list) {
-  // Backward compatibility: default missing fields (including new 'pinned' flag)
+  // Backward compatibility: default missing fields (including new 'pinned' flag and notes array)
   return (Array.isArray(list) ? list : []).map((t) => ({
     ...t,
     category: t.category || "work",
@@ -25,6 +26,8 @@ function ensureDefaults(list) {
     createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
     // new pin flag
     pinned: typeof t.pinned === "boolean" ? t.pinned : false,
+    // new notes array
+    notes: Array.isArray(t.notes) ? t.notes : [],
   }));
 }
 
@@ -41,6 +44,37 @@ function loadLocal() {
 function saveLocal(todos) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+  } catch {
+    // ignore
+  }
+}
+
+function loadQuickNotes() {
+  try {
+    const raw = localStorage.getItem(QUICK_NOTES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    // normalize items array
+    return (Array.isArray(parsed) ? parsed : []).map(n => ({
+      id: n.id || `q_${Math.random().toString(36).slice(2)}_${Date.now()}`,
+      text: String(n.text || ""),
+      body: typeof n.body === "string" ? n.body : "",
+      createdAt: typeof n.createdAt === "string" ? n.createdAt : new Date().toISOString(),
+      updatedAt: typeof n.updatedAt === "string" ? n.updatedAt : new Date().toISOString(),
+      checklist: !!n.checklist,
+      items: Array.isArray(n.items) ? n.items.map(it => ({
+        id: it.id || `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`,
+        text: String(it.text || ""),
+        done: !!it.done,
+      })) : [],
+    }));
+  } catch {
+    return [];
+  }
+}
+function saveQuickNotes(notes) {
+  try {
+    localStorage.setItem(QUICK_NOTES_KEY, JSON.stringify(notes));
   } catch {
     // ignore
   }
@@ -163,6 +197,9 @@ export function useTodos() {
   const hasBackend = useMemo(() => !!getApiBase(), []);
   const schedulerRef = useRef(null);
 
+  // quick notes state
+  const [quickNotes, setQuickNotes] = useState(() => loadQuickNotes());
+
   // stats state
   const [stats, setStats] = useState(() => {
     const existing = loadStats();
@@ -226,6 +263,11 @@ export function useTodos() {
   useEffect(() => {
     saveStats(stats);
   }, [stats]);
+
+  // Persist quick notes
+  useEffect(() => {
+    saveQuickNotes(quickNotes);
+  }, [quickNotes]);
 
   // Toast helpers
   const pushToast = useCallback((kind, title, message) => {
@@ -368,6 +410,8 @@ export function useTodos() {
           completedAt: baseTodo.completedAt,
           // include pinned; backend may ignore it safely
           pinned: baseTodo.pinned,
+          // include notes if provided in future; new tasks start empty here
+          notes: [],
         });
         if (created && created.id) {
           // reconcile: replace local id with server id
@@ -530,6 +574,125 @@ export function useTodos() {
     });
   }
 
+  // PUBLIC_INTERFACE
+  const addTaskNote = useCallback((taskId, note) => {
+    /** Add a note to a specific task by ID. */
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: [note, ...(Array.isArray(t.notes) ? t.notes : [])] } : t));
+    if (hasBackend) {
+      // Try to update backend if supported; ignore failures gracefully
+      api.updateTodo(taskId, { notes: undefined }).catch(() => {});
+    }
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const updateTaskNote = useCallback((taskId, noteId, patch) => {
+    /** Update a note on a task by IDs with shallow patch. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const notes = (Array.isArray(t.notes) ? t.notes : []).map(n => n.id === noteId ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n);
+      return { ...t, notes };
+    }));
+    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const deleteTaskNote = useCallback((taskId, noteId) => {
+    /** Delete a note from a task by IDs. */
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: (Array.isArray(t.notes) ? t.notes : []).filter(n => n.id !== noteId) } : t));
+    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const addChecklistItem = useCallback((taskId, noteId, itemText) => {
+    /** Add a checklist item to a task note. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const notes = (t.notes || []).map(n => {
+        if (n.id !== noteId) return n;
+        const item = { id: `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`, text: itemText, done: false };
+        const items = Array.isArray(n.items) ? [...n.items, item] : [item];
+        return { ...n, checklist: true, items, updatedAt: new Date().toISOString() };
+      });
+      return { ...t, notes };
+    }));
+    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const toggleChecklistItem = useCallback((taskId, noteId, itemId) => {
+    /** Toggle a checklist item done state. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const notes = (t.notes || []).map(n => {
+        if (n.id !== noteId) return n;
+        const items = (n.items || []).map(it => it.id === itemId ? ({ ...it, done: !it.done }) : it);
+        return { ...n, items, updatedAt: new Date().toISOString() };
+      });
+      return { ...t, notes };
+    }));
+    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const deleteChecklistItem = useCallback((taskId, noteId, itemId) => {
+    /** Delete a checklist item from a note. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const notes = (t.notes || []).map(n => {
+        if (n.id !== noteId) return n;
+        const items = (n.items || []).filter(it => it.id !== itemId);
+        return { ...n, items, updatedAt: new Date().toISOString() };
+      });
+      return { ...t, notes };
+    }));
+    if (hasBackend) api.updateTodo(taskId, { notes: undefined }).catch(() => {});
+  }, [hasBackend]);
+
+  // Quick Notes handlers
+  // PUBLIC_INTERFACE
+  const addQuickNote = useCallback((note) => {
+    /** Add a global quick note. */
+    setQuickNotes(prev => [note, ...prev]);
+  }, []);
+  // PUBLIC_INTERFACE
+  const updateQuickNote = useCallback((id, patch) => {
+    /** Update a global quick note by id. */
+    setQuickNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n));
+  }, []);
+  // PUBLIC_INTERFACE
+  const deleteQuickNote = useCallback((id) => {
+    /** Delete a global quick note by id. */
+    setQuickNotes(prev => prev.filter(n => n.id !== id));
+  }, []);
+  // PUBLIC_INTERFACE
+  const addQuickChecklistItem = useCallback((noteId, text) => {
+    /** Add an item to a quick checklist note. */
+    setQuickNotes(prev => prev.map(n => {
+      if (n.id !== noteId) return n;
+      const item = { id: `ci_${Math.random().toString(36).slice(2)}_${Date.now()}`, text, done: false };
+      const items = Array.isArray(n.items) ? [...n.items, item] : [item];
+      return { ...n, checklist: true, items, updatedAt: new Date().toISOString() };
+    }));
+  }, []);
+  // PUBLIC_INTERFACE
+  const toggleQuickChecklistItem = useCallback((noteId, itemId) => {
+    /** Toggle a quick checklist note item. */
+    setQuickNotes(prev => prev.map(n => {
+      if (n.id !== noteId) return n;
+      const items = (n.items || []).map(it => it.id === itemId ? ({ ...it, done: !it.done }) : it);
+      return { ...n, items, updatedAt: new Date().toISOString() };
+    }));
+  }, []);
+  // PUBLIC_INTERFACE
+  const deleteQuickChecklistItem = useCallback((noteId, itemId) => {
+    /** Delete an item from a quick checklist note. */
+    setQuickNotes(prev => prev.map(n => {
+      if (n.id !== noteId) return n;
+      const items = (n.items || []).filter(it => it.id !== itemId);
+      return { ...n, items, updatedAt: new Date().toISOString() };
+    }));
+  }, []);
+
   return {
     todos: sortPinnedFirst(todos),
     loading,
@@ -541,6 +704,23 @@ export function useTodos() {
     hasBackend,
     toasts,
     dismissToast,
+
+    // Task note handlers
+    addTaskNote,
+    updateTaskNote,
+    deleteTaskNote,
+    addChecklistItem,
+    toggleChecklistItem,
+    deleteChecklistItem,
+
+    // Quick notes state + handlers
+    quickNotes,
+    addQuickNote,
+    updateQuickNote,
+    deleteQuickNote,
+    addQuickChecklistItem,
+    toggleQuickChecklistItem,
+    deleteQuickChecklistItem,
 
     // PUBLIC_INTERFACE
     stats,
