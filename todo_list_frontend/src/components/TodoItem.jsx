@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import TaskNotes from "./TaskNotes";
 import NotesBadge from "./NotesBadge";
+import AttachmentsBadge from "./AttachmentsBadge";
+import TaskAttachments from "./TaskAttachments";
 import DependencySelector from "./DependencySelector";
 import { useTodos } from "../hooks/useTodos";
 
@@ -26,6 +28,7 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
   const [remindDraft, setRemindDraft] = useState(todo.remindAt || "");
   const inputRef = useRef(null);
   const [showNotes, setShowNotes] = useState(false);
+  const [showAttachments, setShowAttachments] = useState(false);
 
   // time blocking drafts
   const [startDate, setStartDate] = useState(todo.startTime ? toLocalDateInput(todo.startTime) : "");
@@ -37,7 +40,7 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
   // Dependencies editing
   const [showDepsEdit, setShowDepsEdit] = useState(false);
   const [depDraft, setDepDraft] = useState(Array.isArray(todo.dependencies) ? todo.dependencies : []);
-  const { todos: allTasks, isBlocked, setTaskDependencies, detectCycle } = useTodos();
+  const { todos: allTasks, isBlocked, setTaskDependencies, detectCycle, addAttachment, removeAttachment, replaceAttachmentMeta } = useTodos();
 
   function toLocalDateInput(iso) {
     const d = new Date(iso);
@@ -455,6 +458,19 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
         <NotesBadge count={noteCount} onClick={() => setShowNotes(true)} />
         <button
           className="icon-btn"
+          onClick={() => setShowAttachments(v => !v)}
+          aria-label={showAttachments ? "Hide attachments" : "Show attachments"}
+          aria-expanded={showAttachments}
+          title="Attachments"
+        >
+          📎
+        </button>
+        <AttachmentsBadge
+          count={Array.isArray(todo.attachments) ? todo.attachments.length : 0}
+          onClick={() => setShowAttachments(true)}
+        />
+        <button
+          className="icon-btn"
           onClick={() => setEditing((v) => !v)}
           aria-label={editing ? "Finish editing" : "Edit task"}
           title={editing ? "Finish editing" : "Edit"}
@@ -481,6 +497,17 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
             onToggleChecklistItem={toggleChecklistItem}
             onDeleteChecklistItem={deleteChecklistItem}
             onClose={() => setShowNotes(false)}
+          />
+        </div>
+      )}
+      {showAttachments && (
+        <div className="notes-expando" role="region" aria-label="Task attachments area">
+          <TaskAttachments
+            task={todo}
+            addAttachment={addAttachment}
+            removeAttachment={removeAttachment}
+            replaceAttachmentMeta={replaceAttachmentMeta}
+            onClose={() => setShowAttachments(false)}
           />
         </div>
       )}

@@ -15,11 +15,23 @@ const FIVE_MIN = 5 * 60 * 1000;
 
 // Helpers for local persistence
 function ensureDefaults(list) {
-  // Backward compatibility: default missing fields (including new 'pinned' flag and notes array)
+  // Backward compatibility: default missing fields (including new 'pinned' flag, notes, and attachments array)
   return (Array.isArray(list) ? list : []).map((t) => {
     const startTime = typeof t.startTime === "string" ? t.startTime : null;
     const endTime = typeof t.endTime === "string" ? t.endTime : null;
     const normalized = normalizeTimeRange(startTime, endTime);
+    const attachments = Array.isArray(t.attachments) ? t.attachments : [];
+    // normalize attachments entries minimally
+    const normAtt = attachments.map((a) => ({
+      id: a.id || `att_${Math.random().toString(36).slice(2)}_${Date.now()}`,
+      type: a.type === "audio" ? "audio" : "image",
+      name: a.name || (a.type === "audio" ? "voice-note" : "image"),
+      data: typeof a.data === "string" ? a.data : null,
+      url: typeof a.url === "string" ? a.url : null,
+      createdAt: typeof a.createdAt === "string" ? a.createdAt : new Date().toISOString(),
+      size: typeof a.size === "number" ? a.size : undefined,
+      durationSeconds: typeof a.durationSeconds === "number" ? a.durationSeconds : undefined,
+    }));
     return ({
       ...t,
       category: t.category || "work",
@@ -35,6 +47,8 @@ function ensureDefaults(list) {
       pinned: typeof t.pinned === "boolean" ? t.pinned : false,
       // new notes array
       notes: Array.isArray(t.notes) ? t.notes : [],
+      // new attachments array
+      attachments: normAtt,
       // dependencies (array of task IDs)
       dependencies: Array.isArray(t.dependencies) ? t.dependencies.map(String) : [],
       // time blocking (start/end ISO or null)
@@ -563,6 +577,7 @@ export function useTodos() {
       startTime: norm.startTime,
       endTime: norm.endTime,
       notes: [],
+      attachments: [],
       dependencies: Array.isArray(dependencies) ? dependencies.map(String) : [],
     };
     // optimistic update
@@ -687,6 +702,53 @@ export function useTodos() {
       }
     }
   }, [hasBackend, todos]);
+
+  // Attachments handlers
+  // PUBLIC_INTERFACE
+  const addAttachment = useCallback((taskId, attachment) => {
+    /** Add an attachment object to a task. Stores small files as data URLs; object URLs may not persist after reload. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const atts = Array.isArray(t.attachments) ? t.attachments : [];
+      return { ...t, attachments: [attachment, ...atts] };
+    }));
+    if (hasBackend) {
+      // Best-effort metadata propagation; backend may ignore
+      const patch = { attachments: undefined };
+      api.updateTodo(taskId, patch).catch(() => {});
+    }
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const removeAttachment = useCallback((taskId, attachmentId) => {
+    /** Remove an attachment by ID from the task. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const atts = Array.isArray(t.attachments) ? t.attachments : [];
+      return { ...t, attachments: atts.filter(a => a.id !== attachmentId) };
+    }));
+    if (hasBackend) {
+      const patch = { attachments: undefined };
+      api.updateTodo(taskId, patch).catch(() => {});
+    }
+  }, [hasBackend]);
+
+  // PUBLIC_INTERFACE
+  const replaceAttachmentMeta = useCallback((taskId, attachmentId, patch) => {
+    /** Shallow-merge metadata patch into a single attachment. */
+    setTodos(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const atts = Array.isArray(t.attachments) ? t.attachments : [];
+      return {
+        ...t,
+        attachments: atts.map(a => a.id === attachmentId ? { ...a, ...patch } : a)
+      };
+    }));
+    if (hasBackend) {
+      const payload = { attachments: undefined };
+      api.updateTodo(taskId, payload).catch(() => {});
+    }
+  }, [hasBackend]);
 
   const deleteTodo = useCallback(async (id) => {
     // If deleting a completed today item, adjust stats to avoid stale counts
@@ -1037,5 +1099,10 @@ export function useTodos() {
     setTaskDependencies,
     addDependency,
     removeDependency,
+
+    // Attachment handlers
+    addAttachment,
+    removeAttachment,
+    replaceAttachmentMeta,
   };
 }

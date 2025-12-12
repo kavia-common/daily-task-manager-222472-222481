@@ -54,6 +54,7 @@ function App() {
   const [prioritySort, setPrioritySort] = useState('none'); // 'none' | 'high-first' | 'low-first'
   const [dueFilter, setDueFilter] = useState('all'); // 'all' | 'today' | 'week' | 'overdue'
   const [notesOnly, setNotesOnly] = useState(false); // quick filter chip
+  const [attachmentsOnly, setAttachmentsOnly] = useState(false); // optional filter chip
 
   // Tabs
   const [tab, setTab] = useState('all'); // 'all' | 'today' | 'weekly' | 'timeline'
@@ -109,7 +110,8 @@ function App() {
       else if (due === 'overdue') okDue = isOverdue(t.dueDate, t.completed);
 
       const okNotes = notesOnly ? Array.isArray(t.notes) && t.notes.length > 0 : true;
-      return okCat && okPri && okDue && okNotes;
+      const okAtts = attachmentsOnly ? Array.isArray(t.attachments) && t.attachments.length > 0 : true;
+      return okCat && okPri && okDue && okNotes && okAtts;
     });
 
     // Apply existing priority sort within groups while ensuring pinned first
@@ -151,7 +153,7 @@ function App() {
       });
     }
     return items;
-  }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab]);
+  }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab, notesOnly, attachmentsOnly]);
 
   return (
     <div className="app-shell">
@@ -296,6 +298,17 @@ function App() {
               title="Filter: Notes"
             >
               📝 Notes
+            </button>
+          </div>
+          <div className="filter-group" style={{ alignSelf: "center" }}>
+            <button
+              className={`chip ${attachmentsOnly ? "chip-selected" : ""}`}
+              aria-pressed={attachmentsOnly}
+              onClick={() => setAttachmentsOnly(v => !v)}
+              aria-label="Filter tasks that have attachments"
+              title="Filter: Attachments"
+            >
+              📎 Attachments
             </button>
           </div>
         </div>

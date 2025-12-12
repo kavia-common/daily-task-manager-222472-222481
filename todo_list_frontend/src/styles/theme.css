@@ -673,6 +673,150 @@ body {
   border-radius: 12px;
 }
 
+/* Attachments UI */
+.attachments-badge, .notes-badge {
+  border: 1px solid rgba(17,24,39,0.1);
+  background: rgba(37,99,235,0.06);
+  color: var(--color-primary-600);
+  min-width: 36px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.attachments-panel {
+  display: grid;
+  gap: 10px;
+}
+.attachments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.attachments-title {
+  font-weight: 700;
+}
+.attachments-tools {
+  display: grid;
+  gap: 6px;
+  background: linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0.9));
+  border: 1px solid rgba(37,99,235,0.15);
+  border-radius: 10px;
+  padding: 8px;
+}
+.upload-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.att-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.att-error {
+  color: var(--color-error);
+  font-size: 13px;
+}
+.att-warn {
+  color: #8a5800;
+  font-size: 13px;
+}
+.attachment-list {
+  display: grid;
+  gap: 8px;
+}
+.attachment-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(17,24,39,0.08);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.attachment-thumb {
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(17,24,39,0.08);
+  background: rgba(17,24,39,0.02);
+}
+.thumb-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.attachment-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.audio-container {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+}
+.audio-meta {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.attachment-meta {
+  display: grid;
+  gap: 6px;
+}
+.attachment-name {
+  font-weight: 600;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attachment-sub {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.attachment-actions {
+  display: grid;
+}
+.record-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.record-btn {
+  border: 1px solid rgba(239,68,68,0.3);
+  background: rgba(239,68,68,0.12);
+  color: #991b1b;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.record-btn.recording {
+  border-color: rgba(239,68,68,0.6);
+  background: rgba(239,68,68,0.2);
+  box-shadow: 0 0 0 4px rgba(239,68,68,0.12);
+}
+.record-timer {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* Timeline styles */
 .timeline-container {
   margin-top: 12px;

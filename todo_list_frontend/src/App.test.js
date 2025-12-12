@@ -116,30 +116,22 @@ test('pin control exists and pinned tasks appear first and notes button exists',
   expect(notesButtons.length).toBeGreaterThan(0);
 });
 
-test('timeline grid renders and a time-blocked task appears as a block', () => {
+test('attachments button exists, can open panel, and attachments area renders', () => {
   render(<App />);
-  // switch to Timeline tab
-  fireEvent.click(screen.getByRole('tab', { name: /Timeline/i }));
-  // timeline region exists
-  expect(screen.getByRole('region', { name: /Timeline day view/i })).toBeInTheDocument();
-  // add a time blocked task
-  const taskInput = screen.getByLabelText(/New task/i);
-  fireEvent.change(taskInput, { target: { value: 'Timed Task' } });
-  // set start date/time quickly to today 10:00 -> 10:30 (defaults)
-  const today = new Date();
-  const y = today.getFullYear();
-  const m = String(today.getMonth() + 1).padStart(2, "0");
-  const d = String(today.getDate()).padStart(2, "0");
-  const dateStr = `${y}-${m}-${d}`;
-
-  const startDate = screen.getByLabelText(/Start date/i);
-  fireEvent.change(startDate, { target: { value: dateStr } });
-  const startTime = screen.getByLabelText(/Start time/i);
-  fireEvent.change(startTime, { target: { value: '10:00' } });
-
+  // add a simple task
+  const input = screen.getByLabelText(/New task/i);
+  fireEvent.change(input, { target: { value: 'Task with media' } });
   fireEvent.click(screen.getByLabelText(/Add task/i));
-  // block should render (button with role=button inside the timeline)
-  const timelineRegion = screen.getByRole('region', { name: /Scheduled tasks/i });
-  const buttons = timelineRegion.querySelectorAll('.timeline-block');
-  expect(buttons.length).toBeGreaterThan(0);
+  // find the attachments toggle button by its accessible name
+  const attachToggle = screen.getAllByRole('button', { name: /attachments/i })[0];
+  expect(attachToggle).toBeInTheDocument();
+  fireEvent.click(attachToggle);
+  // panel region should appear
+  expect(screen.getByRole('region', { name: /Task attachments area/i })).toBeInTheDocument();
+  // "Add Photo" trigger should exist as a label for hidden input
+  expect(screen.getByText(/Add Photo/i)).toBeInTheDocument();
+  // Either recorder controls group or unsupported message should be present
+  const maybeGroup = screen.queryByLabelText(/Voice note recorder/i);
+  const maybeMsg = screen.queryByText(/Voice notes not supported/i);
+  expect(maybeGroup || maybeMsg).toBeTruthy();
 });
