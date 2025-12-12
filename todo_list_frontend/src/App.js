@@ -8,25 +8,68 @@ import { useTodos } from './hooks/useTodos';
 // PUBLIC_INTERFACE
 function App() {
   /**
-   * Top-level component for the To-Do app with category/priority controls.
+   * Top-level component for the To-Do app with category/priority controls and due/notification filters.
    * Renders a centered column layout with an input bar and task list.
    */
-  const { todos, loading, error, addTodo, updateTodo, toggleTodo, deleteTodo, hasBackend } = useTodos();
+  const {
+    todos,
+    loading,
+    error,
+    addTodo,
+    updateTodo,
+    toggleTodo,
+    deleteTodo,
+    hasBackend,
+    toasts,
+    dismissToast,
+  } = useTodos();
 
   // Filters and sorting
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [prioritySort, setPrioritySort] = useState('none'); // 'none' | 'high-first' | 'low-first'
+  const [dueFilter, setDueFilter] = useState('all'); // 'all' | 'today' | 'week' | 'overdue'
+
+  const withinSameDay = (iso) => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+  };
+  const withinThisWeek = (iso) => {
+    if (!iso) return false;
+    const target = new Date(iso);
+    const now = new Date();
+    const oneDay = 86400000;
+    const dayOfWeek = now.getDay(); // 0-6
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(start.getTime() - dayOfWeek * oneDay);
+    const weekEnd = new Date(weekStart.getTime() + 7 * oneDay);
+    return target >= weekStart && target < weekEnd;
+  };
+  const isOverdue = (iso, completed) => {
+    if (!iso || completed) return false;
+    return new Date() > new Date(iso);
+  };
 
   const filteredTodos = useMemo(() => {
     const cat = String(categoryFilter || 'all');
     const pri = String(priorityFilter || 'all');
+    const due = String(dueFilter || 'all');
     let items = (todos || []).filter((t) => {
       const tCat = t.category || 'work';
       const tPri = t.priority || 'medium';
       const okCat = cat === 'all' ? true : tCat === cat;
       const okPri = pri === 'all' ? true : tPri === pri;
-      return okCat && okPri;
+
+      let okDue = true;
+      if (due === 'today') okDue = !!t.dueDate && withinSameDay(t.dueDate);
+      else if (due === 'week') okDue = !!t.dueDate && withinThisWeek(t.dueDate);
+      else if (due === 'overdue') okDue = isOverdue(t.dueDate, t.completed);
+
+      return okCat && okPri && okDue;
     });
     if (prioritySort !== 'none') {
       const weight = { high: 3, medium: 2, low: 1 };
@@ -37,7 +80,7 @@ function App() {
       });
     }
     return items;
-  }, [todos, categoryFilter, priorityFilter, prioritySort]);
+  }, [todos, categoryFilter, priorityFilter, prioritySort, dueFilter]);
 
   return (
     <div className="app-shell">
@@ -47,6 +90,17 @@ function App() {
           <div className="header-badge" title={hasBackend ? "Using backend API" : "Using localStorage"}>
             {hasBackend ? "API Connected" : "Local Mode"}
           </div>
+        </div>
+
+        {/* Notification/Toast area */}
+        <div className="toast-area" aria-live="polite" aria-atomic="true">
+          {toasts.map(t => (
+            <div key={t.id} className={`toast ${t.kind}`} role="status">
+              <div className="toast-title">{t.title}</div>
+              <div className="toast-body">{t.message}</div>
+              <button className="icon-btn" aria-label="Dismiss notification" onClick={() => dismissToast(t.id)}>✖️</button>
+            </div>
+          ))}
         </div>
 
         <TodoInput onAdd={addTodo} />
@@ -97,6 +151,22 @@ function App() {
               <option value="none">No sort</option>
               <option value="high-first">High → Low</option>
               <option value="low-first">Low → High</option>
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label htmlFor="due-filter" className="filter-label">Due</label>
+            <select
+              id="due-filter"
+              className="select"
+              aria-label="Filter by due"
+              value={dueFilter}
+              onChange={(e) => setDueFilter(e.target.value)}
+            >
+              <option value="all">All</option>
+              <option value="today">Today</option>
+              <option value="week">This Week</option>
+              <option value="overdue">Overdue</option>
             </select>
           </div>
         </div>

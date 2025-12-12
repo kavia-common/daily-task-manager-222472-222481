@@ -73,6 +73,41 @@ body {
   border: 1px solid rgba(17,24,39,0.06);
 }
 
+/* Toast area */
+.toast-area {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  z-index: 10;
+}
+.toast {
+  min-width: 260px;
+  max-width: 360px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(17,24,39,0.08);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+.toast .toast-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.toast .toast-body {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  color: var(--muted);
+}
+.toast.info { border-left: 4px solid var(--color-primary); }
+.toast.warn { border-left: 4px solid var(--color-secondary); }
+.toast.error { border-left: 4px solid var(--color-error); }
+
 /* Input Bar */
 .input-bar {
   display: flex;
@@ -83,6 +118,7 @@ body {
   border-radius: calc(var(--radius) - 4px);
   box-shadow: var(--shadow-sm);
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  flex-wrap: wrap;
 }
 
 .input-bar:focus-within {
@@ -106,6 +142,15 @@ body {
 .input:focus {
   border-color: var(--color-primary-600);
   box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Accessibility helper */
+.sr-only {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }
 
 /* Selects and small controls */
@@ -164,6 +209,7 @@ body {
   margin-top: 8px;
   border-bottom: 1px dashed rgba(17,24,39,0.06);
   padding-bottom: 12px;
+  flex-wrap: wrap;
 }
 .filter-group {
   display: grid;
@@ -286,6 +332,11 @@ body {
 .chip-pri.high { border-color: rgba(239,68,68,0.45); background: rgba(239,68,68,0.10); }
 .chip-pri.medium { border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.12); }
 .chip-pri.low { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.08); }
+
+.chip-due { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.08); }
+.chip-overdue { border-color: rgba(239,68,68,0.45); background: rgba(239,68,68,0.10); }
+.chip-repeat { border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.12); }
+.chip-remind { border-color: rgba(16,185,129,0.45); background: rgba(16,185,129,0.12); }
 
 /* Empty state */
 .empty {

@@ -1,24 +1,35 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 /**
  * Input bar for adding a new todo.
  * Props:
- * - onAdd(title: string, category?: string, priority?: string): void
+ * - onAdd(title: string, category?: string, priority?: string, dueDate?: string|null, repeat?: 'none'|'daily'|'weekly'|'monthly', remindAt?: string|null): void
  */
 
 // PUBLIC_INTERFACE
 export default function TodoInput({ onAdd }) {
-  /** Input component allowing users to add todos with Enter or button, including category and priority. */
+  /** Input component allowing users to add todos with Enter or button, including category, priority, due, repeat, reminder. */
   const [value, setValue] = useState("");
   const [category, setCategory] = useState("work");
   const [priority, setPriority] = useState("medium");
+  const [dueDate, setDueDate] = useState("");
+  const [repeat, setRepeat] = useState("none");
+  const [remindAt, setRemindAt] = useState("");
+
+  const reminderAllowed = useMemo(() => {
+    return Boolean(dueDate) || repeat !== "none";
+  }, [dueDate, repeat]);
 
   const submit = () => {
     const v = value.trim();
     if (!v) return;
-    onAdd(v, category, priority);
+    const due = dueDate ? new Date(dueDate).toISOString() : null;
+    const remind = reminderAllowed && remindAt ? remindAt : null;
+    onAdd(v, category, priority, due, repeat, remind);
     setValue("");
-    // keep last selected category/priority for convenience
+    setDueDate("");
+    setRemindAt("");
+    // keep last selected category/priority/repeat for convenience
   };
 
   const onKeyDown = (e) => {
@@ -60,6 +71,43 @@ export default function TodoInput({ onAdd }) {
         <option value="medium">Medium</option>
         <option value="low">Low</option>
       </select>
+      <label className="sr-only" htmlFor="due-date-input">Due Date</label>
+      <input
+        id="due-date-input"
+        className="input"
+        type="date"
+        aria-label="Due date"
+        value={dueDate}
+        onChange={(e) => setDueDate(e.target.value)}
+        title="Due Date"
+        style={{ maxWidth: 160 }}
+      />
+      <label className="sr-only" htmlFor="repeat-select">Repeat</label>
+      <select
+        id="repeat-select"
+        className="select"
+        aria-label="Select repeat"
+        value={repeat}
+        onChange={(e) => setRepeat(e.target.value)}
+        title="Repeat"
+      >
+        <option value="none">No repeat</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+      <label className="sr-only" htmlFor="reminder-time">Reminder Time</label>
+      <input
+        id="reminder-time"
+        className="input"
+        type="time"
+        aria-label="Reminder time"
+        value={remindAt}
+        onChange={(e) => setRemindAt(e.target.value)}
+        title="Reminder Time"
+        style={{ maxWidth: 140 }}
+        disabled={!reminderAllowed}
+      />
       <button className="btn" onClick={submit} aria-label="Add task">
         Add
       </button>
