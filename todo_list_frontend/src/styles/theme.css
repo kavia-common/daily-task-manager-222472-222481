@@ -132,6 +132,68 @@ body {
   font-size: 13px;
   color: var(--muted);
 }
+
+/* History View */
+.history-view { margin-top: 12px; display: grid; gap: 10px; }
+.history-filters {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid rgba(37,99,235,0.15);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0.9));
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+.history-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(17,24,39,0.08);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+.history-table thead th {
+  position: sticky;
+  top: 0;
+  background: linear-gradient(180deg, rgba(17,24,39,0.04), rgba(255,255,255,1));
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 10px;
+  border-bottom: 1px solid rgba(17,24,39,0.08);
+}
+.history-table tbody td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(17,24,39,0.06);
+  vertical-align: middle;
+}
+.history-table tr:hover {
+  background: linear-gradient(180deg, rgba(37,99,235,0.04), rgba(255,255,255,0.95));
+}
+.history-table .archived-row {
+  opacity: 0.85;
+}
+.hist-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.hist-assignees { display: inline-flex; gap: 6px; align-items: center; }
+.history-empty {
+  padding: 24px;
+  text-align: center;
+  border: 1px dashed rgba(17,24,39,0.15);
+  border-radius: 12px;
+  color: var(--muted);
+  background: linear-gradient(180deg, rgba(17,24,39,0.03), rgba(255,255,255,0.95));
+}
+.history-empty-title { font-weight: 700; margin-bottom: 4px; color: var(--text); }
+.history-empty-sub { font-size: 13px; color: var(--muted); }
+.muted { color: var(--muted); }
 .toast.info { border-left: 4px solid var(--color-primary); }
 .toast.warn { border-left: 4px solid var(--color-secondary); }
 .toast.error { border-left: 4px solid var(--color-error); }

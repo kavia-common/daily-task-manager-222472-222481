@@ -7,6 +7,7 @@ import ProductivityHeader from './components/ProductivityHeader';
 import BadgesPanel from './components/BadgesPanel';
 import DailyView from './components/DailyView';
 import WeeklySummary from './components/WeeklySummary';
+import HistoryView from './components/HistoryView';
 import { useTodos } from './hooks/useTodos';
 import QuickNotesPanel from './components/QuickNotesPanel';
 import DayTimeline from './components/DayTimeline';
@@ -54,6 +55,11 @@ function AppInner() {
     gamification,
     getBadgeList,
     getLevelInfo,
+
+    // history selectors
+    normalizeDateRange,
+    getCompletedTasks,
+    getCompletedTasksByDateRange,
   } = useTodos();
 
   // Filters and sorting
@@ -67,6 +73,7 @@ function AppInner() {
 
   // Tabs
   const [tab, setTab] = useState('all');
+  const [includeArchivedHistory, setIncludeArchivedHistory] = useState(false);
   const [timelineDate, setTimelineDate] = useState(() => {
     const d = new Date();
     const y = d.getFullYear();
@@ -210,6 +217,7 @@ function AppInner() {
           <button role="tab" aria-selected={tab === 'today'} className={`tab ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>Today</button>
           <button role="tab" aria-selected={tab === 'weekly'} className={`tab ${tab === 'weekly' ? 'active' : ''}`} onClick={() => setTab('weekly')}>Weekly</button>
           <button role="tab" aria-selected={tab === 'timeline'} className={`tab ${tab === 'timeline' ? 'active' : ''}`} onClick={() => setTab('timeline')}>Timeline</button>
+          <button role="tab" aria-selected={tab === 'history'} className={`tab ${tab === 'history' ? 'active' : ''}`} onClick={() => setTab('history')}>History</button>
           <button role="tab" aria-selected={tab === 'archive'} className={`tab tab-archive ${tab === 'archive' ? 'active' : ''}`} onClick={() => setTab('archive')}>Archive</button>
         </div>
 
@@ -383,6 +391,20 @@ function AppInner() {
               );
             })()}
           </div>
+        ) : tab === 'history' ? (
+          <HistoryView
+            todos={todos}
+            getCompletedTasks={getCompletedTasks}
+            getCompletedTasksByDateRange={getCompletedTasksByDateRange}
+            normalizeDateRange={normalizeDateRange}
+            onRestore={(id) => {
+              // Mark as not completed and clear completedAt, ensure not archived
+              updateTodo(id, { completed: false, completedAt: null, archived: false });
+            }}
+            includeArchived={includeArchivedHistory}
+            onToggleIncludeArchived={setIncludeArchivedHistory}
+            gamification={gamification}
+          />
         ) : tab === 'archive' ? (
           <div className="archive-view" role="region" aria-label="Archived tasks">
             <div className="archive-toolbar">

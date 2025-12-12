@@ -57,6 +57,51 @@ test('Archive tab renders', () => {
   expect(screen.getByRole('tab', { name: /archive/i })).toBeInTheDocument();
 });
 
+test('History tab renders and filters exist', () => {
+  render(<App />);
+  const tab = screen.getByRole('tab', { name: /history/i });
+  expect(tab).toBeInTheDocument();
+  fireEvent.click(tab);
+  expect(screen.getByLabelText(/history from date/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/history to date/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/quick date presets/i)).toBeInTheDocument();
+});
+
+test('Completed task appears in History within date range and disappears outside', () => {
+  render(<App />);
+  // add a task and mark complete
+  const input = screen.getByPlaceholderText(/add a new task/i);
+  fireEvent.change(input, { target: { value: 'History Check' } });
+  fireEvent.click(screen.getByRole('button', { name: /add task/i }));
+
+  const cb = screen.getByRole('checkbox', { name: /mark history check as complete/i });
+  fireEvent.click(cb);
+
+  // open History tab
+  fireEvent.click(screen.getByRole('tab', { name: /history/i }));
+
+  // preset today should include it
+  const rowNow = screen.getByText(/History Check/i);
+  expect(rowNow).toBeInTheDocument();
+
+  // set range outside today
+  const today = new Date();
+  const toISODate = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const fromInput = screen.getByLabelText(/history from date/i);
+  const toInput = screen.getByLabelText(/history to date/i);
+  const past = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 10);
+  const past2 = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 9);
+  fireEvent.change(fromInput, { target: { value: toISODate(past) } });
+  fireEvent.change(toInput, { target: { value: toISODate(past2) } });
+
+  expect(screen.queryByText(/History Check/i)).not.toBeInTheDocument();
+});
+
 test('Auto-archive moves an old completed task, restore and delete work', () => {
   jest.useFakeTimers();
   render(<App />);

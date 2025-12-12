@@ -307,6 +307,69 @@ function stdDev(arr) {
   return Math.sqrt(variance);
 }
 
+/**
+ * Normalize a local-date (YYYY-MM-DD) range into inclusive ISO start/end covering entire local days.
+ * If start or end is null, it will be treated as unbounded on that side.
+ */
+// PUBLIC_INTERFACE
+export function normalizeDateRange(startDateStr, endDateStr) {
+  /** Converts YYYY-MM-DD strings to ISO boundaries for local timezone full days. */
+  function startOfDayISO(d) {
+    const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    return dt.toISOString();
+  }
+  function endOfDayISO(d) {
+    const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    return dt.toISOString();
+  }
+  let startISO = null;
+  let endISO = null;
+  try {
+    if (startDateStr) {
+      const [y, m, dd] = String(startDateStr).split("-").map((s) => parseInt(s, 10));
+      const d = new Date(y, (m - 1), dd, 0, 0, 0, 0);
+      startISO = startOfDayISO(d);
+    }
+  } catch { startISO = null; }
+  try {
+    if (endDateStr) {
+      const [y, m, dd] = String(endDateStr).split("-").map((s) => parseInt(s, 10));
+      const d = new Date(y, (m - 1), dd, 23, 59, 59, 999);
+      endISO = endOfDayISO(d);
+    }
+  } catch { endISO = null; }
+  return { startISO, endISO };
+}
+
+// PUBLIC_INTERFACE
+export function getCompletedTasksFromList(list, { includeArchived = true } = {}) {
+  /** Returns all tasks completed (completed===true && completedAt) optionally filtering out archived. */
+  const src = Array.isArray(list) ? list : [];
+  const arr = src.filter((t) => t.completed && typeof t.completedAt === "string" && !!t.completedAt);
+  return includeArchived ? arr : arr.filter((t) => !t.archived);
+}
+
+// PUBLIC_INTERFACE
+export function getCompletedTasksByDateRangeFromList(list, startISO, endISO, { includeArchived = true } = {}) {
+  /** Returns tasks completed between [startISO, endISO] inclusive (if provided). */
+  const src = Array.isArray(list) ? list : [];
+  return src.filter((t) => {
+    if (!t.completed || !t.completedAt) return false;
+    const c = new Date(t.completedAt).getTime();
+    if (isNaN(c)) return false;
+    if (!includeArchived && t.archived) return false;
+    if (startISO) {
+      const s = new Date(startISO).getTime();
+      if (!isNaN(s) && c < s) return false;
+    }
+    if (endISO) {
+      const e = new Date(endISO).getTime();
+      if (!isNaN(e) && c > e) return false;
+    }
+    return true;
+  });
+}
+
 // PUBLIC_INTERFACE
 export function useTodos() {
   /** Hook that exposes todos, CRUD, collaboration integration, stats, and other app features. */
@@ -887,6 +950,18 @@ export function useTodos() {
   }
 
   // Export
+  // History selectors bound to current todos list
+  // PUBLIC_INTERFACE
+  const getCompletedTasks = useCallback(
+    (options = {}) => getCompletedTasksFromList(todos, options),
+    [todos]
+  );
+  // PUBLIC_INTERFACE
+  const getCompletedTasksByDateRange = useCallback(
+    (startISO, endISO, options = {}) => getCompletedTasksByDateRangeFromList(todos, startISO, endISO, options),
+    [todos]
+  );
+
   return {
     todos,
     loading,
@@ -930,6 +1005,10 @@ export function useTodos() {
     normalizeTimeRange,
     snapToFiveMinutes,
     tasksForDay: (date, filters) => tasksForDay(todos, date, filters),
+    // history helpers/selectors
+    normalizeDateRange,
+    getCompletedTasks,
+    getCompletedTasksByDateRange,
     // attachments and notes
     addAttachment,
     removeAttachment,
