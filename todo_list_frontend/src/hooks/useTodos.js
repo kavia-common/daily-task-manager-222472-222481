@@ -8,12 +8,21 @@ import { api, getApiBase } from "../utils/api";
 const STORAGE_KEY = "todos_ocean_pro";
 
 // Helpers for local persistence
+function ensureDefaults(list) {
+  // Backward compatibility: default missing fields
+  return (Array.isArray(list) ? list : []).map((t) => ({
+    ...t,
+    category: t.category || "work",
+    priority: t.priority || "medium",
+  }));
+}
+
 function loadLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return ensureDefaults(parsed);
   } catch {
     return [];
   }
@@ -50,8 +59,9 @@ export function useTodos() {
           const data = await api.listTodos();
           if (data && Array.isArray(data)) {
             if (!isMounted) return;
-            setTodos(data);
-            saveLocal(data); // keep a local cache
+            const withDefaults = ensureDefaults(data);
+            setTodos(withDefaults);
+            saveLocal(withDefaults); // keep a local cache
             setLoading(false);
             return;
           }
@@ -77,23 +87,31 @@ export function useTodos() {
   }, [todos]);
 
   // Actions
-  const addTodo = useCallback(async (title) => {
+  const addTodo = useCallback(async (title, category = "work", priority = "medium") => {
     const baseTodo = {
       id: generateLocalId(),
-      title: title.trim(),
+      title: String(title).trim(),
       completed: false,
       createdAt: new Date().toISOString(),
+      category,
+      priority,
     };
     // optimistic update
     setTodos((prev) => [baseTodo, ...prev]);
 
     if (hasBackend) {
       try {
-        const created = await api.createTodo({ title: baseTodo.title, completed: baseTodo.completed });
+        const created = await api.createTodo({
+          title: baseTodo.title,
+          completed: baseTodo.completed,
+          category: baseTodo.category,
+          priority: baseTodo.priority,
+        });
         if (created && created.id) {
           // reconcile: replace local id with server id
+          const normalized = ensureDefaults([created])[0];
           setTodos((prev) =>
-            prev.map((t) => (t.id === baseTodo.id ? { ...created } : t))
+            prev.map((t) => (t.id === baseTodo.id ? { ...normalized } : t))
           );
         }
       } catch (e) {

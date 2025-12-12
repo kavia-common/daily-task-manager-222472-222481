@@ -108,6 +108,25 @@ body {
   box-shadow: 0 0 0 3px var(--ring);
 }
 
+/* Selects and small controls */
+.select {
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(17,24,39,0.12);
+  background: #fff;
+  color: var(--text);
+  outline: none;
+}
+.select.small {
+  height: 36px;
+  border-radius: 8px;
+}
+.select:focus {
+  border-color: var(--color-primary-600);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
 .btn {
   height: 44px;
   padding: 0 16px;
@@ -120,6 +139,12 @@ body {
   box-shadow: 0 6px 16px rgba(37,99,235,0.25);
   transition: transform 0.08s ease, box-shadow 0.2s ease;
 }
+.btn-small, .btn.btn-small {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
 
 .btn:hover {
   transform: translateY(-1px);
@@ -128,6 +153,25 @@ body {
 
 .btn:active {
   transform: translateY(0);
+}
+
+/* Filters */
+.filters {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  padding: 12px 0 0 0;
+  margin-top: 8px;
+  border-bottom: 1px dashed rgba(17,24,39,0.06);
+  padding-bottom: 12px;
+}
+.filter-group {
+  display: grid;
+  gap: 6px;
+}
+.filter-label {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* Todo List */
@@ -166,6 +210,12 @@ body {
 .title {
   font-size: 16px;
   color: var(--text);
+}
+.title .meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .title.completed {
@@ -214,6 +264,28 @@ body {
   background: rgba(239,68,68,0.08);
   border-color: rgba(239,68,68,0.3);
 }
+
+/* Chips / badges */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid rgba(17,24,39,0.08);
+  background: #fff;
+  color: var(--text);
+}
+.chip-cat.work { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.08); }
+.chip-cat.home { border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.08); }
+.chip-cat.study { border-color: rgba(99,102,241,0.35); background: rgba(99,102,241,0.08); }
+.chip-cat.shopping { border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.12); }
+
+.chip-pri.high { border-color: rgba(239,68,68,0.45); background: rgba(239,68,68,0.10); }
+.chip-pri.medium { border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.12); }
+.chip-pri.low { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.08); }
 
 /* Empty state */
 .empty {
