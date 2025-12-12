@@ -35,6 +35,8 @@ function ensureDefaults(list) {
       pinned: typeof t.pinned === "boolean" ? t.pinned : false,
       // new notes array
       notes: Array.isArray(t.notes) ? t.notes : [],
+      // dependencies (array of task IDs)
+      dependencies: Array.isArray(t.dependencies) ? t.dependencies.map(String) : [],
       // time blocking (start/end ISO or null)
       startTime: normalized.startTime,
       endTime: normalized.endTime,
@@ -456,6 +458,8 @@ export function useTodos() {
       setTodos((prev) => {
         const updated = prev.map((t) => {
           if (!t.dueDate || t.completed) return t;
+          // Suppress reminders if task is blocked by dependencies
+          if (isBlocked(t, prev)) return t;
           const due = new Date(t.dueDate);
           const dueToday = isToday(due);
           const overdue = now > due;
@@ -539,7 +543,7 @@ export function useTodos() {
   }
 
   // Actions
-  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false, startTime = null, endTime = null) => {
+  const addTodo = useCallback(async (title, category = "work", priority = "medium", dueDate = null, repeat = "none", remindAt = null, pinned = false, startTime = null, endTime = null, dependencies = []) => {
     const nowIso = new Date().toISOString();
     // snap optional times
     const norm = normalizeTimeRange(startTime, endTime);
@@ -559,6 +563,7 @@ export function useTodos() {
       startTime: norm.startTime,
       endTime: norm.endTime,
       notes: [],
+      dependencies: Array.isArray(dependencies) ? dependencies.map(String) : [],
     };
     // optimistic update
     setTodos((prev) => [baseTodo, ...prev]);
@@ -581,6 +586,7 @@ export function useTodos() {
           notes: [],
           startTime: baseTodo.startTime,
           endTime: baseTodo.endTime,
+          dependencies: baseTodo.dependencies, // backend may ignore unknown fields
         });
         if (created && created.id) {
           // reconcile: replace local id with server id
@@ -627,6 +633,11 @@ export function useTodos() {
     let toggled;
     setTodos((prev) => {
       const nowIso = new Date().toISOString();
+      // if the target is blocked, do not allow completion toggle to true
+      const target = prev.find(t => t.id === id);
+      if (target && !target.completed && isBlocked(target, prev)) {
+        return prev; // silently ignore; UI will show tooltip
+      }
       const mapped = prev.map((t) => {
         if (t.id !== id) return t;
         const newCompleted = !t.completed;
@@ -882,6 +893,88 @@ export function useTodos() {
     return detectConflicts(dayTasks);
   }, [todos]);
 
+  // PUBLIC_INTERFACE
+  function isBlocked(task, list = todos) {
+    /** Returns true if any dependency task is not completed. */
+    const deps = Array.isArray(task?.dependencies) ? task.dependencies : [];
+    if (!deps.length) return false;
+    const byId = new Map((Array.isArray(list) ? list : []).map((t) => [t.id, t]));
+    for (const depId of deps) {
+      const dep = byId.get(depId);
+      if (!dep || !dep.completed) return true;
+    }
+    return false;
+  }
+
+  // PUBLIC_INTERFACE
+  function detectCycle(taskId, newDeps, list = todos) {
+    /** Basic cycle detection in a small in-memory graph. Returns true if adding edges creates a cycle. */
+    const graph = new Map();
+    const all = Array.isArray(list) ? list : [];
+    all.forEach((t) => {
+      graph.set(t.id, new Set(Array.isArray(t.dependencies) ? t.dependencies.map(String) : []));
+    });
+    if (!graph.has(taskId)) graph.set(taskId, new Set());
+    graph.set(taskId, new Set((newDeps || []).map(String)));
+
+    // DFS
+    const visiting = new Set();
+    const visited = new Set();
+    function dfs(node) {
+      if (visiting.has(node)) return true;
+      if (visited.has(node)) return false;
+      visiting.add(node);
+      const nbrs = graph.get(node) || new Set();
+      for (const n of nbrs) {
+        if (dfs(n)) return true;
+      }
+      visiting.delete(node);
+      visited.add(node);
+      return false;
+    }
+    return dfs(taskId);
+  }
+
+  // PUBLIC_INTERFACE
+  function setTaskDependencies(taskId, depIds) {
+    /** Set dependencies for a task after cycle/self checks. */
+    const deps = Array.isArray(depIds) ? depIds.map(String) : [];
+    if (deps.includes(taskId)) {
+      pushToast("warn", "Invalid dependency", "A task cannot depend on itself.");
+      return false;
+    }
+    const willCycle = detectCycle(taskId, deps, todos);
+    if (willCycle) {
+      pushToast("warn", "Cyclic dependency", "That change would create a cycle. Update rejected.");
+      return false;
+    }
+    setTodos((prev) => prev.map((t) => (t.id === taskId ? { ...t, dependencies: deps } : t)));
+    if (hasBackend) {
+      api.updateTodo(taskId, { dependencies: deps }).catch(() => {});
+    }
+    return true;
+  }
+
+  // PUBLIC_INTERFACE
+  function addDependency(taskId, depId) {
+    /** Add a single dependency if valid. */
+    const t = todos.find((x) => x.id === taskId);
+    if (!t) return false;
+    const current = Array.isArray(t.dependencies) ? t.dependencies.map(String) : [];
+    const next = Array.from(new Set([...current, String(depId)])).filter(Boolean);
+    return setTaskDependencies(taskId, next);
+  }
+
+  // PUBLIC_INTERFACE
+  function removeDependency(taskId, depId) {
+    /** Remove a single dependency id from task. */
+    const t = todos.find((x) => x.id === taskId);
+    if (!t) return false;
+    const current = Array.isArray(t.dependencies) ? t.dependencies.map(String) : [];
+    const next = current.filter((d) => d !== String(depId));
+    return setTaskDependencies(taskId, next);
+  }
+
   return {
     todos: sortPinnedFirst(todos),
     loading,
@@ -937,5 +1030,12 @@ export function useTodos() {
     tasksForDay: (date, filters) => tasksForDay(todos, date, filters),
     /** Conflict detection: Set of IDs overlapping among tasks for date/filters. */
     conflictsForSelected,
+
+    // Dependency helpers
+    isBlocked,
+    detectCycle,
+    setTaskDependencies,
+    addDependency,
+    removeDependency,
   };
 }

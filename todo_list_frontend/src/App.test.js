@@ -10,6 +10,57 @@ test('renders app title and category filter', () => {
   expect(categoryFilter).toBeInTheDocument();
 });
 
+test('dependencies selector available under Advanced', () => {
+  render(<App />);
+  // reveal advanced options
+  const adv = screen.getByRole('button', { name: /advanced/i });
+  adv.click();
+  // dependency selector input should be present
+  const depSearch = screen.getByLabelText(/Select dependencies for new task/i);
+  expect(depSearch).toBeInTheDocument();
+});
+
+test('blocked task cannot be completed until dependency done and badge clears after', () => {
+  render(<App />);
+  const input = screen.getByLabelText(/New task/i);
+  // Add prerequisite A
+  fireEvent.change(input, { target: { value: 'Task A' } });
+  fireEvent.click(screen.getByLabelText(/Add task/i));
+  // Add dependent B with dependency on A
+  fireEvent.change(input, { target: { value: 'Task B' } });
+  const adv = screen.getByRole('button', { name: /advanced/i });
+  adv.click();
+  const depSearch = screen.getByLabelText(/Search tasks to add as dependencies/i);
+  // pick A from options list by pressing Enter (adds first match)
+  fireEvent.change(depSearch, { target: { value: 'Task A' } });
+  fireEvent.keyDown(depSearch, { key: 'Enter', code: 'Enter' });
+  fireEvent.click(screen.getByLabelText(/Add task/i));
+
+  // Find Task B item
+  const taskBCheckbox = screen.getAllByRole('checkbox').find(cb => {
+    const label = cb.getAttribute('aria-label') || '';
+    return label.toLowerCase().includes('task b');
+  });
+  expect(taskBCheckbox).toBeTruthy();
+
+  // Should be disabled due to blocked
+  expect(taskBCheckbox).toBeDisabled();
+
+  // Badge "Blocked" should be visible near Task B title
+  expect(screen.getAllByText(/Blocked/i).length).toBeGreaterThan(0);
+
+  // Complete A -> unblocks B
+  const taskACheckbox = screen.getAllByRole('checkbox').find(cb => {
+    const label = cb.getAttribute('aria-label') || '';
+    return label.toLowerCase().includes('task a');
+  });
+  expect(taskACheckbox).toBeTruthy();
+  fireEvent.click(taskACheckbox);
+
+  // Now B can be toggled
+  expect(taskBCheckbox).not.toBeDisabled();
+});
+
 test('renders due filter control and productivity tabs including Timeline', () => {
   render(<App />);
   const dueFilter = screen.getByLabelText(/Filter by due/i);

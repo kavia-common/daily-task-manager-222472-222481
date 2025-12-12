@@ -90,19 +90,29 @@ export default function DayTimeline({ date, tasks, onSelectTask, conflictIds }) 
             const categoryClass = `cat-${t.category || "work"}`;
             const pri = t.priority || "medium";
             const conflicted = conflicts.has(t.id);
+            // derive blocked: if any dep not completed among provided tasks
+            const byId = new Map((Array.isArray(tasks) ? tasks : []).map(x => [x.id, x]));
+            const deps = Array.isArray(t.dependencies) ? t.dependencies : [];
+            const blocked = deps.some(did => !(byId.get(did)?.completed));
+            const remaining = deps
+              .map(id => byId.get(id))
+              .filter(dep => dep && !dep.completed)
+              .map(dep => dep.title);
+
             return (
               <button
                 key={t.id}
-                className={`timeline-block ${categoryClass} pri-${pri} ${t.pinned ? "pinned" : ""} ${conflicted ? "conflict" : ""}`}
+                className={`timeline-block ${categoryClass} pri-${pri} ${t.pinned ? "pinned" : ""} ${conflicted ? "conflict" : ""} ${blocked ? "blocked" : ""}`}
                 style={{ top: `${top}%`, height: `${height}%` }}
                 onClick={() => onSelectTask && onSelectTask(t.id)}
-                title={`${t.title}\n${formatTimeRange(t.startTime, t.endTime)}\n${t.category || "work"} • ${pri}${t.pinned ? " • ⭐ pinned" : ""}${conflicted ? " • ⚠️ overlapping" : ""}`}
+                title={`${t.title}\n${formatTimeRange(t.startTime, t.endTime)}\n${t.category || "work"} • ${pri}${t.pinned ? " • ⭐ pinned" : ""}${conflicted ? " • ⚠️ overlapping" : ""}${blocked ? ` • 🔗 blocked (${remaining.join(", ") || "dependencies"})` : ""}`}
                 role="button"
-                aria-label={`${t.title}, ${formatTimeRange(t.startTime, t.endTime)}, ${t.category || "work"}, ${pri}${conflicted ? ", overlapping" : ""}`}
+                aria-label={`${t.title}, ${formatTimeRange(t.startTime, t.endTime)}, ${t.category || "work"}, ${pri}${conflicted ? ", overlapping" : ""}${blocked ? ", blocked by dependencies" : ""}`}
               >
                 <div className="timeline-block-header">
                   <span className="timeline-block-time">{formatTimeRange(t.startTime, t.endTime)}</span>
                   {conflicted && <span className="timeline-conflict-icon" aria-hidden="true" title="Overlapping time">⚠️</span>}
+                  {blocked && <span className="timeline-blocked-icon" aria-hidden="true" title="Blocked">🔗</span>}
                 </div>
                 <div className="timeline-block-title">{t.title}</div>
               </button>

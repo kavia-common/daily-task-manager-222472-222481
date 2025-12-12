@@ -120,6 +120,11 @@ function App() {
       return 0;
     };
 
+    const blocked = (t) => Array.isArray(t.dependencies) && t.dependencies.some(id => {
+      const dep = (todos || []).find(x => x.id === id);
+      return !dep || !dep.completed;
+    });
+
     if (prioritySort !== 'none') {
       const weight = { high: 3, medium: 2, low: 1 };
       items = [...items].sort((a, b) => {
@@ -127,10 +132,23 @@ function App() {
         if (pinCmp !== 0) return pinCmp;
         const aw = weight[a.priority || 'medium'];
         const bw = weight[b.priority || 'medium'];
-        return prioritySort === 'high-first' ? bw - aw : aw - bw;
+        const priCmp = prioritySort === 'high-first' ? (bw - aw) : (aw - bw);
+        if (priCmp !== 0) return priCmp;
+        // ready before blocked
+        const ab = blocked(a) ? 1 : 0;
+        const bb = blocked(b) ? 1 : 0;
+        if (ab !== bb) return ab - bb;
+        return 0;
       });
     } else {
-      items = [...items].sort(pinSort);
+      items = [...items].sort((a, b) => {
+        const pinCmp = pinSort(a, b);
+        if (pinCmp !== 0) return pinCmp;
+        const ab = blocked(a) ? 1 : 0;
+        const bb = blocked(b) ? 1 : 0;
+        if (ab !== bb) return ab - bb;
+        return 0;
+      });
     }
     return items;
   }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab]);

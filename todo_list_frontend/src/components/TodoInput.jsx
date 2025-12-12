@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import DependencySelector from "./DependencySelector";
+import { useTodos } from "../hooks/useTodos";
 
 /**
  * Input bar for adding a new todo.
@@ -23,6 +25,10 @@ export default function TodoInput({ onAdd }) {
   const [endDate, setEndDate] = useState("");     // optional; defaults to startDate
   const [endTime, setEndTime] = useState("");     // HH:MM
   const [timeError, setTimeError] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [selectedDeps, setSelectedDeps] = useState([]);
+  // Access tasks list and cycle detector for selector
+  const { todos: allTasks, detectCycle } = useTodos();
 
   const reminderAllowed = useMemo(() => {
     return Boolean(dueDate) || repeat !== "none";
@@ -81,7 +87,7 @@ export default function TodoInput({ onAdd }) {
     const eISO = buildISO(endDate || startDate, endTime);
     const { start, end } = validateTimes(sISO, eISO);
 
-    onAdd(v, category, priority, due, repeat, remind, pinned, start, end);
+    onAdd(v, category, priority, due, repeat, remind, pinned, start, end, selectedDeps);
     setValue("");
     setDueDate("");
     setRemindAt("");
@@ -90,6 +96,8 @@ export default function TodoInput({ onAdd }) {
     setEndDate("");
     setEndTime("");
     setTimeError("");
+    setSelectedDeps([]);
+    setShowAdvanced(false);
     // keep last selected category/priority/repeat for convenience
   };
 
@@ -227,6 +235,34 @@ export default function TodoInput({ onAdd }) {
       <button className="btn" onClick={submit} aria-label="Add task">
         Add
       </button>
+
+      <button
+        className="chip"
+        type="button"
+        onClick={() => setShowAdvanced((v) => !v)}
+        aria-expanded={showAdvanced}
+        aria-controls="advanced-controls"
+        aria-label="Toggle advanced options"
+        title="Advanced"
+      >
+        ⚙️ Advanced
+      </button>
+
+      {showAdvanced && (
+        <div id="advanced-controls" className="advanced-panel" role="region" aria-label="Advanced task options">
+          <div className="advanced-section">
+            <div className="advanced-label">Dependencies</div>
+            <DependencySelector
+              tasks={allTasks}
+              value={selectedDeps}
+              onChange={setSelectedDeps}
+              taskId={null}
+              detectCycle={(_, deps) => false /* No need during creation; self can't be included */}
+              ariaLabel="Select dependencies for new task"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

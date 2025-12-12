@@ -1,21 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import TaskNotes from "./TaskNotes";
 import NotesBadge from "./NotesBadge";
+import DependencySelector from "./DependencySelector";
+import { useTodos } from "../hooks/useTodos";
 
 /**
  * Renders a single todo item with checkbox toggle, inline edit, delete, per-task notes,
- * and inline time blocking editing.
+ * time blocking editing, and dependency display/editor.
  * Props:
- * - todo: { id, title, completed, category?, priority?, dueDate?: string|null, repeat?: string, remindAt?: string|null, lastNotifiedAt?: string|null, notes?: [], startTime?: string|null, endTime?: string|null }
+ * - todo: { id, title, completed, category?, priority?, dueDate?: string|null, repeat?: string, remindAt?: string|null, lastNotifiedAt?: string|null, notes?: [], startTime?: string|null, endTime?: string|null, dependencies?: string[] }
  * - onToggle(id)
  * - onDelete(id)
  * - onUpdate(id, updates)
- * - notes handlers are passed via onUpdate using taskId, see TaskNotes usage
  */
 
 // PUBLIC_INTERFACE
 export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
-  /** Todo item component with inline editing support including due/repeat/remindAt, time blocking and notes expando. */
+  /** Todo item component with inline editing including due/repeat/remindAt, time blocking, notes, and dependencies. */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(todo.title);
   const [catDraft, setCatDraft] = useState(todo.category || "work");
@@ -32,6 +33,11 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
   const [endDate, setEndDate] = useState(todo.endTime ? toLocalDateInput(todo.endTime) : (todo.startTime ? toLocalDateInput(todo.startTime) : ""));
   const [endTime, setEndTime] = useState(todo.endTime ? toLocalTimeInput(todo.endTime) : "");
   const [timeError, setTimeError] = useState("");
+
+  // Dependencies editing
+  const [showDepsEdit, setShowDepsEdit] = useState(false);
+  const [depDraft, setDepDraft] = useState(Array.isArray(todo.dependencies) ? todo.dependencies : []);
+  const { todos: allTasks, isBlocked, setTaskDependencies, detectCycle } = useTodos();
 
   function toLocalDateInput(iso) {
     const d = new Date(iso);
@@ -78,6 +84,10 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     setEndDate(todo.endTime ? toLocalDateInput(todo.endTime) : (todo.startTime ? toLocalDateInput(todo.startTime) : ""));
     setEndTime(todo.endTime ? toLocalTimeInput(todo.endTime) : "");
   }, [todo.title, todo.category, todo.priority, todo.dueDate, todo.repeat, todo.remindAt, todo.startTime, todo.endTime]);
+
+  useEffect(() => {
+    setDepDraft(Array.isArray(todo.dependencies) ? todo.dependencies : []);
+  }, [todo.dependencies]);
 
   const confirmEdit = () => {
     const v = draft.trim();
@@ -163,7 +173,7 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     const sm = String(s.getMinutes()).padStart(2, "0");
     const eh = String(e.getHours()).padStart(2, "0");
     const em = String(e.getMinutes()).padStart(2, "0");
-    return `${sh}:${sm}–${eh}:${em}`;
+    return `${sh}:${sm}\u2013${eh}:${em}`;
   })();
 
   const notes = Array.isArray(todo.notes) ? todo.notes : [];
@@ -209,14 +219,18 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
     onUpdate(taskId, { notes: arr });
   };
 
+  const blocked = !todo.completed && isBlocked(todo, allTasks);
+
   return (
-    <div className="item" role="listitem" aria-label={`Task ${todo.title}`}>
+    <div className={`item ${blocked ? "blocked" : ""}`} role="listitem" aria-label={`Task ${todo.title}`}>
       <input
         type="checkbox"
         className="checkbox"
         checked={!!todo.completed}
         onChange={() => onToggle(todo.id)}
         aria-label={`Mark ${todo.title} as ${todo.completed ? "incomplete" : "complete"}`}
+        disabled={!todo.completed && blocked}
+        title={!todo.completed && blocked ? "Blocked by dependencies. Complete prerequisites first." : undefined}
       />
       <div style={{ width: "100%" }}>
         {editing ? (
@@ -324,7 +338,51 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
 
               <button className="btn btn-small" onClick={confirmEdit} aria-label="Save edits">Save</button>
               <button className="icon-btn" onClick={cancelEdit} aria-label="Cancel edits" title="Cancel">✖️</button>
+              <button
+                className={`chip ${showDepsEdit ? "chip-selected" : ""}`}
+                type="button"
+                onClick={() => setShowDepsEdit(v => !v)}
+                aria-expanded={showDepsEdit}
+                aria-label="Edit dependencies"
+                title="Edit dependencies"
+              >
+                🔗 Dependencies
+              </button>
             </div>
+            {showDepsEdit && (
+              <div className="deps-editor" role="region" aria-label="Dependencies editor">
+                <DependencySelector
+                  tasks={allTasks}
+                  value={depDraft}
+                  onChange={setDepDraft}
+                  taskId={todo.id}
+                  detectCycle={detectCycle}
+                  ariaLabel="Select dependencies for this task"
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button
+                    className="btn btn-small"
+                    onClick={() => {
+                      setTaskDependencies(todo.id, depDraft);
+                      setShowDepsEdit(false);
+                    }}
+                    aria-label="Save dependencies"
+                  >
+                    Save Dependencies
+                  </button>
+                  <button
+                    className="icon-btn"
+                    onClick={() => {
+                      setDepDraft(Array.isArray(todo.dependencies) ? todo.dependencies : []);
+                      setShowDepsEdit(false);
+                    }}
+                    aria-label="Cancel dependency edits"
+                  >
+                    ✖️
+                  </button>
+                </div>
+              </div>
+            )}
             {timeError ? <div role="status" aria-live="polite" style={{ color: "#EF4444", fontSize: 12 }}>{timeError}</div> : null}
           </div>
         ) : (
@@ -347,12 +405,32 @@ export default function TodoItem({ todo, onToggle, onDelete, onUpdate }) {
                 <span className="chip chip-repeat" title={`Repeats ${todo.repeat}`}>{repeatLabel(todo.repeat)}</span>
               ) : null}
               {todo.remindAt ? (
-                <span className="chip chip-remind" title={`Reminds at ${todo.remindAt}`}>⏰ {todo.remindAt}</span>
+                <span className="chip chip-remind" title={`Reminds at ${todo.remindAt}`}>
+                  ⏰ {todo.remindAt}
+                </span>
               ) : null}
               {todo.pinned ? (
                 <span className="chip chip-pin" title="Pinned task" aria-label="Pinned task">⭐ Pinned</span>
               ) : null}
+              {!todo.completed && blocked ? (
+                <span className="chip chip-blocked" aria-label="Task is blocked by dependencies" title="Blocked by dependencies">
+                  🔗 Blocked
+                </span>
+              ) : null}
             </div>
+            {Array.isArray(todo.dependencies) && todo.dependencies.length > 0 ? (
+              <div className="deps-inline" aria-label="Prerequisites">
+                {(todo.dependencies || [])
+                  .map(id => allTasks.find(t => t.id === id))
+                  .filter(Boolean)
+                  .map(dep => (
+                    <span key={dep.id} className={`dep-pill ${dep.completed ? "done" : "pending"}`} title={dep.title}>
+                      {dep.completed ? "✓" : "○"} {dep.title}
+                    </span>
+                  ))
+                }
+              </div>
+            ) : null}
           </div>
         )}
       </div>
