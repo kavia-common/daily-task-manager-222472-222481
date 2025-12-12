@@ -1,13 +1,7 @@
-/**
- * useTodos hook manages to-do items with localStorage persistence and optional backend sync.
- * Enhanced with collaboration support:
- *  - New fields: owner (string), assignees (string[]), sharedWith (string[]), updatedAt (ISO)
- *  - Real-time transport via CollaborationProvider (WebSocket/BroadcastChannel)
- *  - Last-write-wins merging by updatedAt
- *  - Collision detection and resolution helpers
- *  - Permission heuristic (canEdit)
- * Preserves existing capabilities: reminders, due dates, repeat, notes, attachments, timeline, dependencies, pinning, filters.
- */
+ /** 
+  * useTodos hook manages to-do items with localStorage persistence and optional backend sync.
+  * Enhanced with collaboration, gamification, auto-archive, and due-time reminders with accessible toasts.
+  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiBase } from "../utils/api";
 import { useCollaboration } from "../components/CollaborationProvider";
@@ -27,7 +21,6 @@ function getSelfId() {
 // Helpers for local persistence and migration
 function ensureDefaults(list) {
   return (Array.isArray(list) ? list : []).map((t) => {
-    // migrate to new collaboration fields + keep existing fields
     const owner = typeof t.owner === 'string' ? t.owner : getSelfId();
     const assignees = Array.isArray(t.assignees) ? t.assignees : [];
     const sharedWith = Array.isArray(t.sharedWith) ? t.sharedWith : [];
@@ -49,7 +42,6 @@ function ensureDefaults(list) {
       durationSeconds: typeof a.durationSeconds === "number" ? a.durationSeconds : undefined,
     }));
 
-    // archived support defaults and migration
     const archived = typeof t.archived === 'boolean' ? t.archived : false;
     const completedAt = typeof t.completedAt === "string" || t.completedAt === null ? (t.completedAt ?? null) : null;
 
@@ -258,9 +250,7 @@ function lastWriteWins(local, incoming) {
 }
 
 // Stats
-function loadStats() {
-  try { const raw = localStorage.getItem(STATS_KEY); if (!raw) return null; return JSON.parse(raw); } catch { return null; }
-}
+function loadStats() { try { const raw = localStorage.getItem(STATS_KEY); if (!raw) return null; return JSON.parse(raw); } catch { return null; } }
 function saveStats(stats) { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch {} }
 function initStatsFromTodos(todos) {
   const stats = { daily: {}, lastProductiveDate: null, currentStreak: 0, bestStreak: 0, threshold: 1 };
@@ -372,7 +362,7 @@ export function getCompletedTasksByDateRangeFromList(list, startISO, endISO, { i
 
 // PUBLIC_INTERFACE
 export function useTodos() {
-  /** Hook that exposes todos, CRUD, collaboration integration, stats, and other app features. */
+  /** Hook that exposes todos, CRUD, collaboration integration, stats, and due reminders. */
   const [todos, setTodos] = useState(() => loadLocal());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -381,7 +371,7 @@ export function useTodos() {
   const schedulerRef = useRef(null);
 
   // collaboration
-  const { broadcast, on, EVENTS, nowIso, selfId } = useCollaboration();
+  const { broadcast, on, EVENTS } = useCollaboration();
   const toastRef = useRef(null);
   const [collision, setCollision] = useState(null); // {id, remote, local}
 
@@ -396,6 +386,19 @@ export function useTodos() {
     saveStats(fromTodos);
     return fromTodos;
   });
+
+  // notifications settings (persisted)
+  const NOTIF_SETTINGS_KEY = "notifications_settings_v1";
+  const [notificationSettings, setNotificationSettings] = useState(() => {
+    try {
+      const raw = localStorage.getItem(NOTIF_SETTINGS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { dueRemindersEnabled: true, lastViewFocusTaskId: null };
+  });
+  useEffect(() => {
+    try { localStorage.setItem(NOTIF_SETTINGS_KEY, JSON.stringify(notificationSettings)); } catch {}
+  }, [notificationSettings]);
 
   // Initial load with backend attempt
   useEffect(() => {
@@ -481,9 +484,10 @@ export function useTodos() {
   }, [on, EVENTS]);
 
   // Toast helpers
-  const pushToast = useCallback((kind, title, message) => {
+  const pushToast = useCallback((kind, title, message, options = {}) => {
     const id = `toast_${Math.random().toString(36).slice(2)}_${Date.now()}`;
-    setToasts((prev) => [{ id, kind, title, message }, ...prev]);
+    const { actionLabel, onAction, autoFocusAction = false } = options || {};
+    setToasts((prev) => [{ id, kind, title, message, actionLabel, onAction, autoFocusAction }, ...prev]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 6000);
@@ -492,7 +496,7 @@ export function useTodos() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Auto-archive runner: archive completed tasks older than threshold
+  // Auto-archive runner
   const archiveThresholdDays = 10;
   const runAutoArchive = useCallback(() => {
     let archivedCount = 0;
@@ -517,40 +521,79 @@ export function useTodos() {
     }
   }, [archiveThresholdDays, pushToast]);
 
-  // kick on app load and periodically daily-ish (every 6 hours to be safe)
   useEffect(() => {
     runAutoArchive();
     const id = setInterval(runAutoArchive, 6 * 60 * 60 * 1000);
     return () => clearInterval(id);
   }, [runAutoArchive]);
 
-  // Reminders evaluation (kept minimal here)
+  // Helper to determine dependency-blocked state from current list
+  const isBlocked = useCallback((task, list) => {
+    if (!task || !Array.isArray(task.dependencies) || task.dependencies.length === 0) return false;
+    const all = Array.isArray(list) ? list : [];
+    for (const depId of task.dependencies) {
+      const dep = all.find((x) => x.id === String(depId));
+      if (!dep || !dep.completed) return true;
+    }
+    return false;
+  }, []);
+
+  // Due-time reminders scheduler with cooldown and 'due-now' check
   useEffect(() => {
     function evaluate() {
       const now = new Date();
-      const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
-      setTodos((prev) => prev.map((t) => {
-        // ignore archived tasks for notifications
-        if (t.archived) return t;
-        if (!t.dueDate || t.completed) return t;
-        const due = new Date(t.dueDate);
-        const dueToday = isSameLocalDate(due, new Date());
-        const overdue = now > due;
-        let should = false; let kind = 'info'; let msg = '';
-        if (overdue) { kind = 'error'; msg = `Task "${t.title || t.text}" is overdue since ${due.toLocaleString()}`; should = true; }
-        else if (dueToday && due > now && due <= nextHour) { kind = 'warn'; msg = `Task "${t.title || t.text}" is due within the next hour (${due.toLocaleTimeString()})`; should = true; }
-        if (!should) return t;
-        const last = t.lastNotifiedAt ? new Date(t.lastNotifiedAt) : null;
-        const tooSoon = last && (now.getTime() - last.getTime()) < 60 * 60 * 1000;
-        if (tooSoon) return t;
-        pushToast(kind, "Reminder", msg);
-        return { ...t, lastNotifiedAt: now.toISOString() };
-      }));
+      const nowMs = now.getTime();
+      const cooldownMs = 30 * 60 * 1000;
+      setTodos((prev) =>
+        prev.map((t) => {
+          if (!t) return t;
+          if (typeof notificationSettings?.dueRemindersEnabled !== 'undefined' && !notificationSettings.dueRemindersEnabled) return t;
+          if (t.archived || t.completed) return t;
+          if (isBlocked(t, prev)) return t;
+
+          const dueIso = t.remindAt && t.dueDate ? (() => {
+            try {
+              const d = new Date(t.dueDate);
+              const [hh, mm] = String(t.remindAt).split(":").map((s) => parseInt(s, 10));
+              if (!isNaN(hh)) d.setHours(hh || 0, mm || 0, 0, 0);
+              return d.toISOString();
+            } catch { return t.dueDate; }
+          })() : t.dueDate;
+
+          if (!dueIso) return t;
+          const due = new Date(dueIso);
+          const dueMs = due.getTime();
+          const shouldDueNow = nowMs >= dueMs;
+          const withinNextHour = dueMs > nowMs && dueMs <= (nowMs + 60 * 60 * 1000);
+          if (!shouldDueNow && !withinNextHour) return t;
+
+          const last = t.lastNotifiedAt ? new Date(t.lastNotifiedAt) : null;
+          const tooSoon = last && (nowMs - last.getTime()) < cooldownMs;
+          if (tooSoon) return t;
+
+          const title = t.title || t.text || "Untitled";
+          const kind = shouldDueNow ? "error" : "warn";
+          const msg = shouldDueNow ? `Task due: ${title}` : `Upcoming: "${title}" at ${due.toLocaleTimeString()}`;
+          const onAction = () => {
+            try {
+              const esc = (s) => (window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(s) : String(s).replace(/\"/g, '\\"'));
+              const el = document.querySelector(`[aria-label="Task ${esc(title)}"]`);
+              if (el && typeof el.scrollIntoView === "function") {
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+                const btn = el.parentElement?.querySelector('button, [role="button"], input, select, textarea');
+                if (btn && typeof btn.focus === "function") btn.focus();
+              }
+            } catch {}
+          };
+          pushToast(kind, "Reminder", msg, { actionLabel: "View", onAction, autoFocusAction: true });
+          return { ...t, lastNotifiedAt: now.toISOString() };
+        })
+      );
     }
     const id = setInterval(evaluate, 60000);
     evaluate();
     return () => clearInterval(id);
-  }, [pushToast]);
+  }, [pushToast, notificationSettings, isBlocked]);
 
   // Stats helpers
   function incrementCreated(dateIso) {
@@ -604,7 +647,7 @@ export function useTodos() {
     const newTodo = ensureDefaults([{
       id: generateLocalId(),
       title: String(title).trim() || String(extras.text || ''),
-      text: undefined, // text kept for legacy compatibility; primary is title
+      text: undefined,
       completed: false,
       createdAt: now,
       category, priority, dueDate, repeat, remindAt,
@@ -632,7 +675,6 @@ export function useTodos() {
       recordTaskAssignedOrShared();
     }
 
-    // Broadcast and backend
     broadcast("task:created", newTodo);
     if (hasBackend) createRemote(newTodo);
   }, [broadcast, hasBackend, createRemote]);
@@ -645,7 +687,6 @@ export function useTodos() {
         setCollision({ id, remote: current, local: { ...current, ...updates } });
         return prev;
       }
-      // normalize time if needed
       let timePatched = {};
       if ("startTime" in updates || "endTime" in updates) {
         const norm = normalizeTimeRange(updates.startTime ?? null, updates.endTime ?? null);
@@ -653,7 +694,6 @@ export function useTodos() {
       }
       const next = ensureDefaults([{ ...current, ...updates, ...timePatched, updatedAt: new Date().toISOString() }])[0];
 
-      // Gamification counters: detect new time block creation and assignment/share additions
       const prevHadTimeBlock = !!(current.startTime && current.endTime);
       const nextHasTimeBlock = !!(next.startTime && next.endTime);
       if (!prevHadTimeBlock && nextHasTimeBlock) {
@@ -675,7 +715,7 @@ export function useTodos() {
     if (!collision) return;
     const { id, remote, local } = collision;
     if (action === 'reload') {
-      setCollision(null); // keep remote
+      setCollision(null);
       return;
     }
     const next = { ...remote, ...local, updatedAt: new Date().toISOString() };
@@ -704,7 +744,6 @@ export function useTodos() {
     setTodos((prev) => {
       const nowIso = new Date().toISOString();
 
-      // local helper to determine if a task is blocked by dependencies
       const isBlockedLocal = (task, list) => {
         if (!task || !Array.isArray(task.dependencies) || task.dependencies.length === 0) return false;
         const all = Array.isArray(list) ? list : [];
@@ -719,7 +758,6 @@ export function useTodos() {
         if (t.id !== id) return t;
         const newCompleted = !t.completed;
 
-        // check if task was blocked before completing
         const blockedBefore = !t.completed && isBlockedLocal(t, prev);
 
         let next = { ...t, completed: newCompleted, updatedAt: nowIso };
@@ -730,22 +768,18 @@ export function useTodos() {
           next.archived = false;
           if (!hadSameDay) incrementCompleted(newCompletedAt);
 
-          // Gamification idempotency: award only if this completion occurrence is new
           const occurrenceId = newCompletedAt;
           const lastAwardedAt = t.rewards?.lastAwardedCompletionAt || null;
           if (lastAwardedAt !== occurrenceId) {
-            // detect focus completion (no notes/attachments/deps)
             const hasNotes = Array.isArray(t.notes) && t.notes.length > 0;
             const hasAtts = Array.isArray(t.attachments) && t.attachments.length > 0;
             const hasDeps = Array.isArray(t.dependencies) && t.dependencies.length > 0;
 
-            // compute bonuses via recordCompletion
             const result = recordCompletion(
               { ...t, completedAt: newCompletedAt, _wasBlockedBeforeComplete: blockedBefore },
               { localAction: true }
             );
 
-            // update per-task reward metadata
             next.rewards = {
               ...(t.rewards || {}),
               lastAwardedCompletionAt: occurrenceId,
@@ -760,7 +794,6 @@ export function useTodos() {
               recordFocusCompletion();
             }
 
-            // show toasts if level-up or new badges
             if (result.leveledUp) {
               pushToast('info', 'Level Up!', `Great job! You've reached level ${getLevelInfo().level}.`);
             }
@@ -769,11 +802,9 @@ export function useTodos() {
             }
           }
         } else {
-          // rollback today's completion count if applicable
           if (t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date())) {
             decrementCompleted(t.completedAt);
           }
-          // rollback gamification history entry for this occurrence (best-effort)
           if (t.rewards?.lastCompletionOccurrenceId) {
             rollbackCompletion(t.id, t.rewards.lastCompletionOccurrenceId);
           }
@@ -814,10 +845,10 @@ export function useTodos() {
     if (hasBackend) { try { await api.deleteTodo(id); } catch (e) { setError(e); } }
   }, [broadcast, hasBackend]);
 
-  // Notes/attachments/dependencies helpers used by components (preserved)
+  // Notes/attachments/dependencies helpers
   const addTaskNote = useCallback((taskId, note) => {
     setTodos(prev => prev.map(t => t.id === taskId ? { ...t, notes: [note, ...(Array.isArray(t.notes) ? t.notes : [])], updatedAt: new Date().toISOString() } : t));
-    broadcast("task:updated", { ...prevSafeFind(todos, taskId) });
+    broadcast("task:updated", { ...(todos.find(x => x.id === taskId) || {}) });
   }, [broadcast, todos]);
   const updateTaskNote = useCallback((taskId, noteId, patch) => {
     setTodos(prev => prev.map(t => {
@@ -847,7 +878,7 @@ export function useTodos() {
     return (Array.isArray(list) ? list : []).find((t) => t.id === id) || null;
   }
 
-  // Dependencies helpers (preserved)
+  // Dependencies helpers
   function detectCycle(taskId, newDeps, list = todos) {
     const graph = new Map();
     const all = Array.isArray(list) ? list : [];
@@ -892,8 +923,7 @@ export function useTodos() {
     return setTaskDependencies(taskId, next);
   }
 
-  // Derived data for Today view and productivity
-  const todayKey = toKey(new Date());
+  // Derived data
   const todaysTodos = useMemo(() => {
     const now = new Date();
     return (todos || []).filter((t) => {
@@ -949,7 +979,6 @@ export function useTodos() {
     setTodos(prev => prev.filter(t => !t.archived));
   }
 
-  // Export
   // History selectors bound to current todos list
   // PUBLIC_INTERFACE
   const getCompletedTasks = useCallback(
@@ -1026,6 +1055,9 @@ export function useTodos() {
     resolveCollision,
     canEdit,
     setToastHandler: (fn) => { toastRef.current = fn; },
+    // notifications settings
+    notificationSettings,
+    setNotificationSettings,
     // archive public helpers
     // PUBLIC_INTERFACE
     runAutoArchive,
@@ -1040,7 +1072,6 @@ export function useTodos() {
     gamification,
     // PUBLIC_INTERFACE
     awardPoints: (delta, reason, taskId) => {
-      // simple wrapper for consumers/tests
       return recordCompletion({ id: taskId, priority: "medium", completedAt: new Date().toISOString() }, { localAction: true, priorityBonus: false, streakBonus: false, dueBonus: false, unblockedBonus: false, timeBlockBonus: false, });
     },
     // PUBLIC_INTERFACE

@@ -61,6 +61,10 @@ function AppInner() {
     normalizeDateRange,
     getCompletedTasks,
     getCompletedTasksByDateRange,
+
+    // notifications
+    notificationSettings,
+    setNotificationSettings,
   } = useTodos();
 
   // Filters and sorting
@@ -212,6 +216,20 @@ function AppInner() {
           onOpenBadges={() => setBadgesOpen(true)}
         />
 
+        {/* Reminders toggle */}
+        <div className="header" style={{ justifyContent: 'flex-end', gap: 12 }}>
+          <label className="chip" style={{ cursor: 'pointer' }} title="Toggle due-time reminders">
+            <input
+              type="checkbox"
+              checked={!!(notificationSettings && notificationSettings.dueRemindersEnabled)}
+              onChange={(e) => setNotificationSettings((s) => ({ ...s, dueRemindersEnabled: !!e.target.checked }))}
+              aria-label="Enable due reminders"
+              style={{ marginRight: 8 }}
+            />
+            Reminders
+          </label>
+        </div>
+
         {/* Tabs */}
         <div className="tabs" role="tablist" aria-label="Views">
           <button role="tab" aria-selected={tab === 'all'} className={`tab ${tab === 'all' ? 'active' : ''}`} onClick={() => setTab('all')}>All</button>
@@ -225,9 +243,19 @@ function AppInner() {
         {/* Notification/Toast area */}
         <div className="toast-area" aria-live="polite" aria-atomic="true">
           {toasts.map(t => (
-            <div key={t.id} className={`toast ${t.kind}`} role="status">
+            <div key={t.id} className={`toast ${t.kind}`} role="status" aria-live="polite">
               <div className="toast-title">{t.title}</div>
               <div className="toast-body">{t.message}</div>
+              {t.actionLabel && typeof t.onAction === 'function' ? (
+                <button
+                  className="chip"
+                  onClick={() => { try { t.onAction(); } catch {} finally { dismissToast(t.id); } }}
+                  aria-label={`${t.actionLabel} notification`}
+                  autoFocus={!!t.autoFocusAction}
+                >
+                  {t.actionLabel}
+                </button>
+              ) : null}
               <button className="icon-btn" aria-label="Dismiss notification" onClick={() => dismissToast(t.id)}>✖️</button>
             </div>
           ))}
@@ -381,7 +409,7 @@ function AppInner() {
                   tasks={tasksFiltered}
                   conflictIds={conflicts}
                   onSelectTask={(id) => {
-                    const esc = (s) => (window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(s) : String(s).replace(/\"/g, '\\"'));
+                    const esc = (s) => (window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(s) : String(s).replace(/\\"/g, '\\"'));
                     const title = tasksFiltered.find(t=>t.id===id)?.title || "";
                     const el = document.querySelector(`[aria-label="Task ${esc(title)}"]`);
                     if (el && typeof el.scrollIntoView === "function") {
@@ -418,7 +446,7 @@ function AppInner() {
             {filteredTodos.length === 0 ? (
               <EmptyState
                 title="No archived tasks yet."
-                icon="🗄️"
+                icon="📄"
                 variant="full"
               />
             ) : (
