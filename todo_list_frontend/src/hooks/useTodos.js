@@ -48,6 +48,10 @@ function ensureDefaults(list) {
       durationSeconds: typeof a.durationSeconds === "number" ? a.durationSeconds : undefined,
     }));
 
+    // archived support defaults and migration
+    const archived = typeof t.archived === 'boolean' ? t.archived : false;
+    const completedAt = typeof t.completedAt === "string" || t.completedAt === null ? (t.completedAt ?? null) : null;
+
     return ({
       ...t,
       owner,
@@ -60,7 +64,8 @@ function ensureDefaults(list) {
       repeat: t.repeat || "none",
       remindAt: typeof t.remindAt === "string" || t.remindAt === null ? t.remindAt : null,
       lastNotifiedAt: t.lastNotifiedAt || null,
-      completedAt: typeof t.completedAt === "string" || t.completedAt === null ? (t.completedAt ?? null) : null,
+      completedAt,
+      archived,
       createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
       pinned: typeof t.pinned === "boolean" ? t.pinned : false,
       notes: Array.isArray(t.notes) ? t.notes : [],
@@ -418,12 +423,46 @@ export function useTodos() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // Auto-archive runner: archive completed tasks older than threshold
+  const archiveThresholdDays = 10;
+  const runAutoArchive = useCallback(() => {
+    let archivedCount = 0;
+    const now = Date.now();
+    const thresholdMs = archiveThresholdDays * 24 * 60 * 60 * 1000;
+    setTodos((prev) => {
+      const next = (prev || []).map((t) => {
+        if (t.archived) return t;
+        if (t.completed && t.completedAt) {
+          const completedMs = new Date(t.completedAt).getTime();
+          if (!isNaN(completedMs) && now - completedMs >= thresholdMs) {
+            archivedCount += 1;
+            return { ...t, archived: true, pinned: false, updatedAt: new Date().toISOString() };
+          }
+        }
+        return t;
+      });
+      return next;
+    });
+    if (archivedCount > 0) {
+      pushToast('info', 'Auto-archive', `${archivedCount} task${archivedCount > 1 ? 's' : ''} auto-archived`);
+    }
+  }, [archiveThresholdDays, pushToast]);
+
+  // kick on app load and periodically daily-ish (every 6 hours to be safe)
+  useEffect(() => {
+    runAutoArchive();
+    const id = setInterval(runAutoArchive, 6 * 60 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [runAutoArchive]);
+
   // Reminders evaluation (kept minimal here)
   useEffect(() => {
     function evaluate() {
       const now = new Date();
       const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
       setTodos((prev) => prev.map((t) => {
+        // ignore archived tasks for notifications
+        if (t.archived) return t;
         if (!t.dueDate || t.completed) return t;
         const due = new Date(t.dueDate);
         const dueToday = isSameLocalDate(due, new Date());
@@ -569,12 +608,15 @@ export function useTodos() {
           const newCompletedAt = nowIso;
           const hadSameDay = t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date());
           next.completedAt = newCompletedAt;
+          // when marking completed, ensure not archived immediately; auto-archive will decide later
+          next.archived = false;
           if (!hadSameDay) incrementCompleted(newCompletedAt);
         } else {
           if (t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date())) {
             decrementCompleted(t.completedAt);
           }
           next.completedAt = null;
+          next.archived = false;
         }
         if (newCompleted && t.repeat && t.repeat !== "none") {
           const nextDue = addRepeat(t.dueDate || nowIso, t.repeat, t.remindAt || null);
@@ -693,6 +735,7 @@ export function useTodos() {
   const todaysTodos = useMemo(() => {
     const now = new Date();
     return (todos || []).filter((t) => {
+      if (t.archived) return false;
       const createdToday = t.createdAt && isSameLocalDate(new Date(t.createdAt), now);
       const dueToday = t.dueDate && isSameLocalDate(new Date(t.dueDate), now);
       const startToday = t.startTime && isSameLocalDate(new Date(t.startTime), now);
@@ -732,6 +775,17 @@ export function useTodos() {
     const u = getSelfId();
     return task.owner === u || (task.assignees || []).includes(u) || (task.sharedWith || []).includes(u);
   }, []);
+
+  // Archive helpers
+  function restoreTask(taskId) {
+    setTodos(prev => prev.map(t => t.id === taskId ? { ...t, archived: false, updatedAt: new Date().toISOString() } : t));
+  }
+  function purgeArchived(taskId) {
+    setTodos(prev => prev.filter(t => !(t.id === taskId && t.archived)));
+  }
+  function purgeAllArchived() {
+    setTodos(prev => prev.filter(t => !t.archived));
+  }
 
   // Export
   return {
@@ -794,5 +848,14 @@ export function useTodos() {
     resolveCollision,
     canEdit,
     setToastHandler: (fn) => { toastRef.current = fn; },
+    // archive public helpers
+    // PUBLIC_INTERFACE
+    runAutoArchive,
+    // PUBLIC_INTERFACE
+    restoreTask,
+    // PUBLIC_INTERFACE
+    purgeArchived,
+    // PUBLIC_INTERFACE
+    purgeAllArchived,
   };
 }

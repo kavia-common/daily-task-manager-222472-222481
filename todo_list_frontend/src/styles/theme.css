@@ -95,6 +95,11 @@ body {
   background: linear-gradient(180deg, rgba(37,99,235,0.08), rgba(255,255,255,1));
   color: var(--color-primary);
 }
+.tab.tab-archive.active {
+  border-color: rgba(107,114,128,0.5);
+  background: linear-gradient(180deg, rgba(17,24,39,0.06), rgba(255,255,255,1));
+  color: #374151;
+}
 
 /* Toast area */
 .toast-area {
@@ -442,6 +447,41 @@ body {
   box-shadow: 0 6px 14px rgba(0,0,0,0.06);
   border-color: rgba(37,99,235,0.25);
   background: linear-gradient(180deg, rgba(37,99,235,0.04), rgba(255,255,255,0.9));
+}
+.item.archived {
+  opacity: 0.85;
+  border-style: dashed;
+  border-color: rgba(17,24,39,0.15);
+  background: linear-gradient(180deg, rgba(17,24,39,0.03), rgba(255,255,255,0.95));
+  font-style: italic;
+}
+.archived-title {
+  color: #4b5563;
+}
+.badge-archived {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(17,24,39,0.2);
+  background: rgba(17,24,39,0.06);
+  color: #374151;
+}
+.chip-dim {
+  border-color: rgba(17,24,39,0.15);
+  background: rgba(17,24,39,0.05);
+  color: #4b5563;
+}
+.archive-view { margin-top: 12px; }
+.archive-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.archive-title {
+  font-weight: 700;
 }
 
 .checkbox {

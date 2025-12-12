@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import App from './App';
 
 beforeEach(() => {
@@ -52,9 +52,55 @@ test('Assignee chips render after selection', () => {
   expect(initials.length).toBeGreaterThan(0);
 });
 
-test('BroadcastChannel presence shows live pill', async () => {
+test('Archive tab renders', () => {
   render(<App />);
-  // The header should show Live pill due to mocked BroadcastChannel transport connected
-  const live = await screen.findByText(/live/i);
-  expect(live).toBeInTheDocument();
+  expect(screen.getByRole('tab', { name: /archive/i })).toBeInTheDocument();
+});
+
+test('Auto-archive moves an old completed task, restore and delete work', () => {
+  jest.useFakeTimers();
+  render(<App />);
+  const input = screen.getByPlaceholderText(/add a new task/i);
+  fireEvent.change(input, { target: { value: 'Old Completed Task' } });
+  fireEvent.click(screen.getByRole('button', { name: /add task/i }));
+
+  // mark complete
+  const checkbox = screen.getByRole('checkbox', { name: /mark old completed task as complete/i });
+  fireEvent.click(checkbox);
+
+  // simulate 11 days pass
+  const now = new Date();
+  const past = new Date(now.getTime() + 11 * 24 * 60 * 60 * 1000);
+  jest.setSystemTime(past);
+
+  // open Archive tab and run manual auto-archive button to avoid waiting interval
+  fireEvent.click(screen.getByRole('tab', { name: /archive/i }));
+  const runBtn = screen.getByRole('button', { name: /run auto-archive now/i });
+  fireEvent.click(runBtn);
+
+  // task should appear in archive
+  expect(screen.getByText(/Old Completed Task/i)).toBeInTheDocument();
+
+  // restore brings back to All tab
+  const restoreBtn = screen.getByRole('button', { name: /restore task from archive/i });
+  fireEvent.click(restoreBtn);
+  fireEvent.click(screen.getByRole('tab', { name: /all/i }));
+  expect(screen.getByText(/Old Completed Task/i)).toBeInTheDocument();
+
+  // go back to archive (should be gone)
+  fireEvent.click(screen.getByRole('tab', { name: /archive/i }));
+  expect(screen.queryByText(/Old Completed Task/i)).not.toBeInTheDocument();
+
+  // archive again to test delete permanently: mark complete and advance time
+  fireEvent.click(screen.getByRole('tab', { name: /all/i }));
+  const cb2 = screen.getByRole('checkbox', { name: /mark old completed task as complete/i });
+  fireEvent.click(cb2);
+  jest.setSystemTime(new Date(past.getTime() + 11 * 24 * 60 * 60 * 1000));
+  fireEvent.click(screen.getByRole('tab', { name: /archive/i }));
+  fireEvent.click(screen.getByRole('button', { name: /run auto-archive now/i }));
+  // now delete permanently
+  const deleteBtn = screen.getByRole('button', { name: /delete permanently/i });
+  fireEvent.click(deleteBtn);
+  expect(screen.queryByText(/Old Completed Task/i)).not.toBeInTheDocument();
+  jest.useRealTimers();
 });

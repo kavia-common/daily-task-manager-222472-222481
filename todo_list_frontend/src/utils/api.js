@@ -64,6 +64,8 @@ export const api = {
         owner: demoUser || todo.owner || (process.env.REACT_APP_USER_EMAIL || 'me'),
         assignees: Array.isArray(todo.assignees) ? todo.assignees : [],
         sharedWith: Array.isArray(todo.sharedWith) ? todo.sharedWith : [],
+        archived: !!todo.archived,
+        completedAt: todo.completedAt || null,
         updatedAt: todo.updatedAt || new Date().toISOString(),
       };
       return await request("/todos", { method: "POST", body: JSON.stringify(payload) });
@@ -77,6 +79,8 @@ export const api = {
     try {
       const payload = {
         ...updates,
+        archived: typeof updates.archived === 'boolean' ? updates.archived : updates.archived,
+        completedAt: 'completedAt' in updates ? updates.completedAt : updates.completedAt,
         updatedAt: updates.updatedAt || new Date().toISOString(),
       };
       return await request(`/todos/${id}`, { method: "PUT", body: JSON.stringify(payload) });

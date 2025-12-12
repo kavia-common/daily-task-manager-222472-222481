@@ -43,6 +43,11 @@ function AppInner() {
     addQuickChecklistItem,
     toggleQuickChecklistItem,
     deleteQuickChecklistItem,
+    // archive helpers
+    runAutoArchive,
+    restoreTask,
+    purgeArchived,
+    purgeAllArchived,
   } = useTodos();
 
   // Filters and sorting
@@ -52,6 +57,7 @@ function AppInner() {
   const [dueFilter, setDueFilter] = useState('all');
   const [notesOnly, setNotesOnly] = useState(false);
   const [attachmentsOnly, setAttachmentsOnly] = useState(false);
+  const [hideCompleted, setHideCompleted] = useState(false);
 
   // Tabs
   const [tab, setTab] = useState('all');
@@ -95,6 +101,12 @@ function AppInner() {
     if (tab === 'today') {
       source = todaysTodos;
     }
+    // hide archived everywhere except Archive tab
+    if (tab !== 'archive') {
+      source = source.filter(t => !t.archived);
+    } else {
+      source = (todos || []).filter(t => t.archived);
+    }
     let items = source.filter((t) => {
       const tCat = t.category || 'work';
       const tPri = t.priority || 'medium';
@@ -108,7 +120,8 @@ function AppInner() {
 
       const okNotes = notesOnly ? Array.isArray(t.notes) && t.notes.length > 0 : true;
       const okAtts = attachmentsOnly ? Array.isArray(t.attachments) && t.attachments.length > 0 : true;
-      return okCat && okPri && okDue && okNotes && okAtts;
+      const okCompleted = hideCompleted ? !t.completed : true;
+      return okCat && okPri && okDue && okNotes && okAtts && okCompleted;
     });
 
     const pinSort = (a, b) => {
@@ -148,7 +161,7 @@ function AppInner() {
       });
     }
     return items;
-  }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab, notesOnly, attachmentsOnly]);
+  }, [todos, todaysTodos, categoryFilter, priorityFilter, prioritySort, dueFilter, tab, notesOnly, attachmentsOnly, hideCompleted]);
 
   const toastTimer = useRef(null);
   const [toastMsg, setToastMsg] = useState('');
@@ -187,6 +200,7 @@ function AppInner() {
           <button role="tab" aria-selected={tab === 'today'} className={`tab ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>Today</button>
           <button role="tab" aria-selected={tab === 'weekly'} className={`tab ${tab === 'weekly' ? 'active' : ''}`} onClick={() => setTab('weekly')}>Weekly</button>
           <button role="tab" aria-selected={tab === 'timeline'} className={`tab ${tab === 'timeline' ? 'active' : ''}`} onClick={() => setTab('timeline')}>Timeline</button>
+          <button role="tab" aria-selected={tab === 'archive'} className={`tab tab-archive ${tab === 'archive' ? 'active' : ''}`} onClick={() => setTab('archive')}>Archive</button>
         </div>
 
         {/* Notification/Toast area */}
@@ -261,6 +275,11 @@ function AppInner() {
           <div className="filter-group" style={{ alignSelf: "center" }}>
             <button className={`chip ${attachmentsOnly ? "chip-selected" : ""}`} aria-pressed={attachmentsOnly} onClick={() => setAttachmentsOnly(v => !v)} aria-label="Filter tasks that have attachments" title="Filter: Attachments">
               📎 Attachments
+            </button>
+          </div>
+          <div className="filter-group" style={{ alignSelf: "center" }}>
+            <button className={`chip ${hideCompleted ? "chip-selected" : ""}`} aria-pressed={hideCompleted} onClick={() => setHideCompleted(v => !v)} aria-label="Hide completed tasks in active views" title="Hide completed">
+              ✅ Hide completed
             </button>
           </div>
         </div>
@@ -353,6 +372,41 @@ function AppInner() {
                 />
               );
             })()}
+          </div>
+        ) : tab === 'archive' ? (
+          <div className="archive-view" role="region" aria-label="Archived tasks">
+            <div className="archive-toolbar">
+              <div className="archive-title">Archived Tasks</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-small" onClick={() => runAutoArchive()} aria-label="Run auto-archive now">Run auto-archive</button>
+                <button className="btn btn-small" onClick={() => purgeAllArchived()} aria-label="Delete all archived tasks permanently">Delete all</button>
+              </div>
+            </div>
+            {filteredTodos.length === 0 ? (
+              <div className="empty">No archived tasks.</div>
+            ) : (
+              <div className="list" role="list" aria-label="Archived list">
+                {filteredTodos.map(t => (
+                  <div key={t.id} className="item archived" role="listitem">
+                    <div style={{ gridColumn: '1 / span 2' }}>
+                      <div className="title archived-title">
+                        <span className="badge-archived" aria-label="Archived badge">Archived</span>
+                        {t.title || t.text}
+                      </div>
+                      <div className="meta">
+                        {t.completedAt ? <span className="chip chip-dim" title={`Completed at ${new Date(t.completedAt).toLocaleString()}`}>Completed: {new Date(t.completedAt).toLocaleDateString()}</span> : null}
+                        <span className={`chip chip-cat ${t.category || 'work'}`}>{t.category || 'work'}</span>
+                        <span className={`chip chip-pri ${t.priority || 'medium'}`}>{t.priority || 'medium'}</span>
+                      </div>
+                    </div>
+                    <div className="actions">
+                      <button className="icon-btn" onClick={() => restoreTask(t.id)} aria-label="Restore task from archive" title="Restore">♻️</button>
+                      <button className="icon-btn danger" onClick={() => purgeArchived(t.id)} aria-label="Delete permanently" title="Delete permanently">🗑️</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <TodoList
