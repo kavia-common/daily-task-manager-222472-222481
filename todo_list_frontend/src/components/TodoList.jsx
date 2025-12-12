@@ -1,5 +1,6 @@
 import TodoItem from "./TodoItem";
 import { useTodos } from "../hooks/useTodos";
+import EmptyState from "./EmptyState";
 
 /**
  * Renders a list of todos or an empty state, with collision banner when collaboration conflicts occur.
@@ -16,7 +17,14 @@ export default function TodoList({ todos, onToggle, onDelete, onUpdate }) {
   const { collision, resolveCollision } = useTodos();
 
   if (!todos || todos.length === 0) {
-    return <div className="empty">No tasks yet. Add your first task above.</div>;
+    return (
+      <EmptyState
+        title="No tasks yet — add your first task!"
+        subtitle="Use the input above to quickly add a task and get started."
+        icon="📝"
+        variant="full"
+      />
+    );
   }
 
   return (

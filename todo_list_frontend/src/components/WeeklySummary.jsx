@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import EmptyState from "./EmptyState";
 
 /**
  * Weekly summary of last 7 days using simple CSS bars.
@@ -16,6 +17,17 @@ export default function WeeklySummary({ days }) {
   }, [days]);
 
   const maxCount = Math.max(1, ...days.map(d => Math.max(d.created, d.completed)));
+
+  if (!days || days.length === 0 || days.every(d => (d.created || 0) + (d.completed || 0) === 0)) {
+    return (
+      <EmptyState
+        title="No activity yet."
+        subtitle="Your weekly summary will appear here once you start completing tasks."
+        icon="📈"
+        variant="full"
+      />
+    );
+  }
 
   return (
     <div className="weekly-summary" role="region" aria-label="Weekly summary">

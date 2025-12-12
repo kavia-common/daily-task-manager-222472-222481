@@ -67,6 +67,29 @@ test('History tab renders and filters exist', () => {
   expect(screen.getByLabelText(/quick date presets/i)).toBeInTheDocument();
 });
 
+// Empty states tests
+test('All view shows “No tasks yet” when no tasks exist', () => {
+  render(<App />);
+  expect(screen.getByText(/No tasks yet — add your first task!/i)).toBeInTheDocument();
+});
+
+test('Timeline empty state shows when no time blocks for the selected day', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('tab', { name: /timeline/i }));
+  expect(screen.getByText(/No time blocks for this day/i)).toBeInTheDocument();
+});
+
+test('History view shows empty state message when date range yields no results', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('tab', { name: /history/i }));
+  // Choose a range far in the past to ensure no results
+  const fromInput = screen.getByLabelText(/history from date/i);
+  const toInput = screen.getByLabelText(/history to date/i);
+  fireEvent.change(fromInput, { target: { value: '2000-01-01' } });
+  fireEvent.change(toInput, { target: { value: '2000-01-02' } });
+  expect(screen.getByText(/No completed tasks in this range/i)).toBeInTheDocument();
+});
+
 test('Completed task appears in History within date range and disappears outside', () => {
   render(<App />);
   // add a task and mark complete
@@ -176,4 +199,27 @@ test('Level progress renders with XP', () => {
   render(<App />);
   const levelProgress = screen.getByRole('progressbar', { name: /level progress/i });
   expect(levelProgress).toBeInTheDocument();
+});
+
+// Empty states tests
+test('All view shows “No tasks yet” when no tasks exist', () => {
+  render(<App />);
+  expect(screen.getByText(/No tasks yet — add your first task!/i)).toBeInTheDocument();
+});
+
+test('Timeline empty state shows when no time blocks for the selected day', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('tab', { name: /timeline/i }));
+  expect(screen.getByText(/No time blocks for this day/i)).toBeInTheDocument();
+});
+
+test('History view shows empty state message when date range yields no results', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('tab', { name: /history/i }));
+  // Choose an old range to ensure no results
+  const fromInput = screen.getByLabelText(/history from date/i);
+  const toInput = screen.getByLabelText(/history to date/i);
+  fireEvent.change(fromInput, { target: { value: '2000-01-01' } });
+  fireEvent.change(toInput, { target: { value: '2000-01-02' } });
+  expect(screen.getByText(/No completed tasks in this range/i)).toBeInTheDocument();
 });

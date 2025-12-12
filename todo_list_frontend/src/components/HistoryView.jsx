@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import EmptyState from "./EmptyState";
 
 // PUBLIC_INTERFACE
 export default function HistoryView({
@@ -152,10 +153,12 @@ export default function HistoryView({
       </div>
 
       {filtered.length === 0 ? (
-        <div className="history-empty">
-          <div className="history-empty-title">No matching completed tasks</div>
-          <div className="history-empty-sub">Try adjusting the date range, searching different terms, or include archived.</div>
-        </div>
+        <EmptyState
+          title="No completed tasks in this range."
+          subtitle="Try adjusting the date range, searching different terms, or include archived."
+          icon="📜"
+          variant="full"
+        />
       ) : (
         <div className="history-table-wrap">
           <table className="history-table" aria-label="Completed tasks">

@@ -11,6 +11,7 @@ import HistoryView from './components/HistoryView';
 import { useTodos } from './hooks/useTodos';
 import QuickNotesPanel from './components/QuickNotesPanel';
 import DayTimeline from './components/DayTimeline';
+import EmptyState from './components/EmptyState';
 import { tasksForDay as selectorTasksForDay } from './hooks/useTodos';
 import { CollaborationProvider } from './components/CollaborationProvider';
 
@@ -415,7 +416,11 @@ function AppInner() {
               </div>
             </div>
             {filteredTodos.length === 0 ? (
-              <div className="empty">No archived tasks.</div>
+              <EmptyState
+                title="No archived tasks yet."
+                icon="🗄️"
+                variant="full"
+              />
             ) : (
               <div className="list" role="list" aria-label="Archived list">
                 {filteredTodos.map(t => (
@@ -441,12 +446,81 @@ function AppInner() {
             )}
           </div>
         ) : (
-          <TodoList
-            todos={filteredTodos}
-            onToggle={toggleTodo}
-            onDelete={deleteTodo}
-            onUpdate={updateTodo}
-          />
+          (() => {
+            // compute global empty states for All view
+            if (tab === 'all') {
+              const totalActive = (todos || []).filter(t => !t.archived).length;
+              const totalCompletedActive = (todos || []).filter(t => !t.archived && t.completed).length;
+              const hasAny = totalActive > 0;
+
+              const clearFilters = () => {
+                setCategoryFilter('all');
+                setPriorityFilter('all');
+                setPrioritySort('none');
+                setDueFilter('all');
+                setNotesOnly(false);
+                setAttachmentsOnly(false);
+                setHideCompleted(false);
+              };
+
+              if (!hasAny) {
+                return (
+                  <EmptyState
+                    title="No tasks yet — add your first task!"
+                    subtitle="Use the input above to quickly add a task and get started."
+                    icon="✨"
+                    variant="full"
+                  />
+                );
+              }
+
+              if (hasAny && filteredTodos.length === 0) {
+                return (
+                  <EmptyState
+                    title="No tasks match your filters. Try clearing filters."
+                    subtitle="Category, priority, due, and other filters may be hiding results."
+                    icon="🔎"
+                    actionLabel="Clear filters"
+                    onAction={clearFilters}
+                    variant="full"
+                  />
+                );
+              }
+
+              if (filteredTodos.length > 0) {
+                // normal list path
+                return (
+                  <TodoList
+                    todos={filteredTodos}
+                    onToggle={toggleTodo}
+                    onDelete={deleteTodo}
+                    onUpdate={updateTodo}
+                  />
+                );
+              }
+
+              // check all completed and not hidden by archive
+              if (totalActive > 0 && totalCompletedActive === totalActive && !hideCompleted) {
+                return (
+                  <EmptyState
+                    title="All caught up! Great job!"
+                    icon="✅"
+                    variant="full"
+                  />
+                );
+              }
+            }
+
+            // default path for non-All tabs
+            return (
+              <TodoList
+                todos={filteredTodos}
+                onToggle={toggleTodo}
+                onDelete={deleteTodo}
+                onUpdate={updateTodo}
+              />
+            );
+          })()
         )}
       </main>
       {toastMsg && (

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import EmptyState from "./EmptyState";
 
 /**
  * TaskAttachments: Inline panel to manage a task's attachments (images and voice notes).
@@ -297,7 +298,12 @@ export default function TaskAttachments({
 
       <div className="attachment-list">
         {attachments.length === 0 ? (
-          <div className="empty">No attachments yet.</div>
+          <EmptyState
+            title="No attachments yet"
+            subtitle="Add images or record a voice note to attach to this task."
+            icon="📎"
+            variant="compact"
+          />
         ) : (
           attachments.map((a) => (
             <div key={a.id} className="attachment-card">

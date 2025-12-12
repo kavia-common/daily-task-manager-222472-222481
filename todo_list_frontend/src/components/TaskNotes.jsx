@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from "react";
+import EmptyState from "./EmptyState";
 
 /**
  * TaskNotes renders an inline editor/viewer for notes belonging to a single task.
@@ -153,7 +154,12 @@ export default function TaskNotes({
 
       <div className="notes-list">
         {notes.length === 0 ? (
-          <div className="empty">No notes yet.</div>
+          <EmptyState
+            title="No notes yet"
+            subtitle="Add a note to keep context and details with this task."
+            icon="🗒️"
+            variant="compact"
+          />
         ) : notes.map((n) => (
           <div className="note-card" key={n.id}>
             <div className="note-card-head">

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import TodoList from "./TodoList";
+import EmptyState from "./EmptyState";
 
 /**
  * Daily view showing tasks due today or created today, with a quick add.
@@ -45,12 +46,21 @@ export default function DailyView({ todaysTodos, todayTotals, onAdd, onToggle, o
         </div>
       </div>
 
-      <TodoList
-        todos={todaysTodos}
-        onToggle={onToggle}
-        onDelete={onDelete}
-        onUpdate={onUpdate}
-      />
+      {(!todaysTodos || todaysTodos.length === 0) ? (
+        <EmptyState
+          title="No tasks for today — plan your day!"
+          subtitle="Add a new task or schedule time blocks to see them here."
+          icon="📅"
+          variant="full"
+        />
+      ) : (
+        <TodoList
+          todos={todaysTodos}
+          onToggle={onToggle}
+          onDelete={onDelete}
+          onUpdate={onUpdate}
+        />
+      )}
     </div>
   );
 }
