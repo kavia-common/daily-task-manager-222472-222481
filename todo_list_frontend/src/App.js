@@ -4,6 +4,7 @@ import './styles/theme.css';
 import TodoInput from './components/TodoInput';
 import TodoList from './components/TodoList';
 import ProductivityHeader from './components/ProductivityHeader';
+import BadgesPanel from './components/BadgesPanel';
 import DailyView from './components/DailyView';
 import WeeklySummary from './components/WeeklySummary';
 import { useTodos } from './hooks/useTodos';
@@ -48,6 +49,11 @@ function AppInner() {
     restoreTask,
     purgeArchived,
     purgeAllArchived,
+
+    // gamification
+    gamification,
+    getBadgeList,
+    getLevelInfo,
   } = useTodos();
 
   // Filters and sorting
@@ -177,6 +183,7 @@ function AppInner() {
     }
   }, [todosHookForToast]);
 
+  const [badgesOpen, setBadgesOpen] = useState(false);
   return (
     <div className="app-shell">
       <main className="card" role="main" aria-label="To-Do Application">
@@ -192,6 +199,9 @@ function AppInner() {
           todayScore={todayScore}
           currentStreak={currentStreak}
           bestStreak={bestStreak}
+          levelInfo={getLevelInfo ? getLevelInfo() : { level: 1, points: 0, nextLevelAt: 100, progressPercent: 0 }}
+          badges={getBadgeList ? getBadgeList() : []}
+          onOpenBadges={() => setBadgesOpen(true)}
         />
 
         {/* Tabs */}
@@ -423,6 +433,7 @@ function AppInner() {
           <div className="toast-body">{toastMsg}</div>
         </div>
       )}
+      <BadgesPanel open={badgesOpen} onClose={() => setBadgesOpen(false)} earned={(gamification && gamification.badges) || []} history={(gamification && gamification.history) || []} />
     </div>
   );
 }

@@ -104,3 +104,31 @@ test('Auto-archive moves an old completed task, restore and delete work', () => 
   expect(screen.queryByText(/Old Completed Task/i)).not.toBeInTheDocument();
   jest.useRealTimers();
 });
+
+test('Completing a task increases points and First Steps badge appears', async () => {
+  jest.useFakeTimers();
+  render(<App />);
+
+  const input = screen.getByPlaceholderText(/add a new task/i);
+  fireEvent.change(input, { target: { value: 'Gamify Me' } });
+  fireEvent.click(screen.getByRole('button', { name: /add task/i }));
+
+  const checkbox = screen.getByRole('checkbox', { name: /mark gamify me as complete/i });
+  fireEvent.click(checkbox);
+
+  // Open badges panel
+  const viewBadgesBtn = await screen.findByRole('button', { name: /view all badges/i });
+  fireEvent.click(viewBadgesBtn);
+
+  const panel = await screen.findByRole('dialog', { name: /badges panel/i });
+  expect(panel).toBeInTheDocument();
+  expect(screen.getByText(/first steps/i)).toBeInTheDocument();
+
+  jest.useRealTimers();
+});
+
+test('Level progress renders with XP', () => {
+  render(<App />);
+  const levelProgress = screen.getByRole('progressbar', { name: /level progress/i });
+  expect(levelProgress).toBeInTheDocument();
+});

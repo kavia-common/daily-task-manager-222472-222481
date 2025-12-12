@@ -99,4 +99,13 @@ export const api = {
       return null;
     }
   },
+  /** Optional: sync gamification state; returns null if backend not configured or unsupported. */
+  async gamificationSync(state) {
+    try {
+      return await request(`/gamification/state`, { method: "POST", body: JSON.stringify(state) });
+    } catch (e) {
+      // ignore; backend may not support
+      return null;
+    }
+  },
 };

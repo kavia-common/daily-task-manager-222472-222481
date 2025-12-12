@@ -361,6 +361,41 @@ body {
   color: var(--color-secondary);
   text-shadow: 0 1px 0 rgba(0,0,0,0.04);
 }
+.level-progress {
+  width: 220px;
+  max-width: 40vw;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(37,99,235,0.12);
+  overflow: hidden;
+  border: 1px solid rgba(37,99,235,0.25);
+}
+.level-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary-500), var(--color-primary-600));
+}
+.level-progress-meta {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+.badges-quick {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.badge-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(245,158,11,0.15);
+  color: #8a5800;
+  border: 1px solid rgba(245,158,11,0.45);
+}
 .prod-streak { display: flex; gap: 8px; }
 .streak-chip {
   border: 1px solid rgba(245,158,11,0.4);
@@ -787,6 +822,72 @@ body {
   background: linear-gradient(180deg, rgba(245,158,11,0.06), rgba(255,255,255,0.9));
   border: 1px solid rgba(245,158,11,0.35);
   border-radius: 12px;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17,24,39,0.45);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.modal-card {
+  width: 100%;
+  max-width: 720px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(17,24,39,0.12);
+  box-shadow: var(--shadow-md);
+  padding: 12px;
+}
+
+/* Badges panel */
+.badges-panel {
+  display: grid;
+  gap: 10px;
+}
+.badges-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.badges-title {
+  font-weight: 700;
+}
+.badges-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.badge-card {
+  border: 1px solid rgba(37,99,235,0.25);
+  background: linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0.95));
+  border-radius: 10px;
+  padding: 8px;
+}
+.badge-card.earned {
+  border-color: rgba(245,158,11,0.55);
+  background: linear-gradient(180deg, rgba(245,158,11,0.12), rgba(255,255,255,0.98));
+}
+.badge-card.locked {
+  opacity: 0.6;
+  border-style: dashed;
+}
+.badge-name {
+  font-weight: 700;
+}
+.badge-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+.badges-subtitle {
+  font-weight: 700;
+  color: var(--muted);
+}
+.badges-empty {
+  color: var(--muted);
 }
 
 /* Attachments UI */

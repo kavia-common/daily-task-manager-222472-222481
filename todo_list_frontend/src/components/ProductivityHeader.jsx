@@ -9,7 +9,7 @@ import { useCollaboration } from "./CollaborationProvider";
  * - currentStreak: number
  * - bestStreak: number
  */
-export default function ProductivityHeader({ todayTotals, todayScore, currentStreak, bestStreak }) {
+export default function ProductivityHeader({ todayTotals, todayScore, currentStreak, bestStreak, levelInfo, badges = [], onOpenBadges }) {
   const { presence, connected, transport } = useCollaboration();
   const pct = Math.round((todayTotals?.rate || 0) * 100);
   const completed = todayTotals?.completed || 0;
@@ -36,9 +36,12 @@ export default function ProductivityHeader({ todayTotals, todayScore, currentStr
             <span className="presence-count">{presence.onlineCount}</span>
           </div>
         </div>
-        <div className="prod-score">
-          <div className="prod-score-label">Productivity Score</div>
-          <div className="prod-score-value" aria-label={`Today's score ${todayScore}`}>{todayScore}</div>
+        <div className="prod-score" aria-label="Gamification level and points">
+          <div className="prod-score-label">Level {levelInfo?.level || 1}</div>
+          <div className="level-progress" role="progressbar" aria-valuemin={0} aria-valuemax={levelInfo?.nextLevelAt || 100} aria-valuenow={levelInfo?.points || 0} aria-label="Level progress">
+            <div className="level-progress-fill" style={{ width: `${Math.min(100, levelInfo?.progressPercent || 0)}%` }} />
+          </div>
+          <div className="level-progress-meta">{levelInfo?.points || 0} / {levelInfo?.nextLevelAt || 100} XP</div>
         </div>
       </div>
       <div className="prod-header-row">
@@ -51,6 +54,12 @@ export default function ProductivityHeader({ todayTotals, todayScore, currentStr
         <div className="prod-streak">
           <span className="streak-chip" title="Current streak">🔥 Current Streak: {currentStreak}d</span>
           <span className="streak-chip best" title="Best streak">🏆 Best: {bestStreak}d</span>
+        </div>
+        <div className="badges-quick" role="list" aria-label="Top badges">
+          {(badges || []).slice(0, 3).map((b) => (
+            <span key={b} className="badge-chip" role="listitem" title={b} aria-label={`Badge ${b}`}>{b}</span>
+          ))}
+          <button className="chip" onClick={onOpenBadges} aria-haspopup="dialog" aria-label="View all badges">View all badges</button>
         </div>
         <div className="dev-user-switch">
           <label htmlFor="dev-user" className="sr-only">Switch user</label>

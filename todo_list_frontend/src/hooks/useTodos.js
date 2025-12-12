@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiBase } from "../utils/api";
 import { useCollaboration } from "../components/CollaborationProvider";
+import { useGamification } from "./useGamification";
 
 const STORAGE_KEY = "todos_ocean_pro";
 const STATS_KEY = "todo_stats_v1";
@@ -73,6 +74,11 @@ function ensureDefaults(list) {
       dependencies: Array.isArray(t.dependencies) ? t.dependencies.map(String) : [],
       startTime: norm.startTime,
       endTime: norm.endTime,
+      rewards: typeof t.rewards === "object" && t.rewards ? {
+        lastAwardedCompletionAt: typeof t.rewards.lastAwardedCompletionAt === "string" ? t.rewards.lastAwardedCompletionAt : null,
+        totalPointsEarned: typeof t.rewards.totalPointsEarned === "number" ? t.rewards.totalPointsEarned : 0,
+        lastCompletionOccurrenceId: typeof t.rewards.lastCompletionOccurrenceId === "string" ? t.rewards.lastCompletionOccurrenceId : null,
+      } : { lastAwardedCompletionAt: null, totalPointsEarned: 0, lastCompletionOccurrenceId: null },
     });
   });
 }
@@ -555,6 +561,14 @@ export function useTodos() {
     setTodos((prev) => [newTodo, ...prev]);
     incrementCreated(now);
 
+    // Gamification events on creation
+    if (newTodo.startTime && newTodo.endTime) {
+      recordTaskCreatedWithTimeBlock();
+    }
+    if ((newTodo.assignees && newTodo.assignees.length > 0) || (newTodo.sharedWith && newTodo.sharedWith.length > 0)) {
+      recordTaskAssignedOrShared();
+    }
+
     // Broadcast and backend
     broadcast("task:created", newTodo);
     if (hasBackend) createRemote(newTodo);
@@ -575,6 +589,18 @@ export function useTodos() {
         timePatched = { startTime: norm.startTime, endTime: norm.endTime };
       }
       const next = ensureDefaults([{ ...current, ...updates, ...timePatched, updatedAt: new Date().toISOString() }])[0];
+
+      // Gamification counters: detect new time block creation and assignment/share additions
+      const prevHadTimeBlock = !!(current.startTime && current.endTime);
+      const nextHasTimeBlock = !!(next.startTime && next.endTime);
+      if (!prevHadTimeBlock && nextHasTimeBlock) {
+        recordTaskCreatedWithTimeBlock();
+      }
+      const prevShareCount = (Array.isArray(current.assignees) ? current.assignees.length : 0) + (Array.isArray(current.sharedWith) ? current.sharedWith.length : 0);
+      const nextShareCount = (Array.isArray(next.assignees) ? next.assignees.length : 0) + (Array.isArray(next.sharedWith) ? next.sharedWith.length : 0);
+      if (nextShareCount > prevShareCount) {
+        recordTaskAssignedOrShared();
+      }
       const merged = prev.map((t) => (t.id === id ? next : t));
       broadcast("task:updated", next);
       if (hasBackend) updateRemote(id, next);
@@ -596,24 +622,97 @@ export function useTodos() {
     setCollision(null);
   }, [collision, broadcast, hasBackend, updateRemote]);
 
+  // Gamification store
+  const {
+    state: gamification,
+    recordCompletion,
+    rollbackCompletion,
+    recordTaskCreatedWithTimeBlock,
+    recordTaskAssignedOrShared,
+    recordFocusCompletion,
+    recordUnblockedCompletion,
+    getBadgeList,
+    getLevelInfo,
+    resetGamification,
+  } = useGamification();
+
   const toggleTodo = useCallback(async (id) => {
     let toggledNow = null;
     setTodos((prev) => {
       const nowIso = new Date().toISOString();
+
+      // local helper to determine if a task is blocked by dependencies
+      const isBlockedLocal = (task, list) => {
+        if (!task || !Array.isArray(task.dependencies) || task.dependencies.length === 0) return false;
+        const all = Array.isArray(list) ? list : [];
+        for (const depId of task.dependencies) {
+          const dep = all.find((x) => x.id === String(depId));
+          if (!dep || !dep.completed) return true;
+        }
+        return false;
+      };
+
       const mapped = prev.map((t) => {
         if (t.id !== id) return t;
         const newCompleted = !t.completed;
+
+        // check if task was blocked before completing
+        const blockedBefore = !t.completed && isBlockedLocal(t, prev);
+
         let next = { ...t, completed: newCompleted, updatedAt: nowIso };
         if (newCompleted) {
           const newCompletedAt = nowIso;
           const hadSameDay = t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date());
           next.completedAt = newCompletedAt;
-          // when marking completed, ensure not archived immediately; auto-archive will decide later
           next.archived = false;
           if (!hadSameDay) incrementCompleted(newCompletedAt);
+
+          // Gamification idempotency: award only if this completion occurrence is new
+          const occurrenceId = newCompletedAt;
+          const lastAwardedAt = t.rewards?.lastAwardedCompletionAt || null;
+          if (lastAwardedAt !== occurrenceId) {
+            // detect focus completion (no notes/attachments/deps)
+            const hasNotes = Array.isArray(t.notes) && t.notes.length > 0;
+            const hasAtts = Array.isArray(t.attachments) && t.attachments.length > 0;
+            const hasDeps = Array.isArray(t.dependencies) && t.dependencies.length > 0;
+
+            // compute bonuses via recordCompletion
+            const result = recordCompletion(
+              { ...t, completedAt: newCompletedAt, _wasBlockedBeforeComplete: blockedBefore },
+              { localAction: true }
+            );
+
+            // update per-task reward metadata
+            next.rewards = {
+              ...(t.rewards || {}),
+              lastAwardedCompletionAt: occurrenceId,
+              lastCompletionOccurrenceId: occurrenceId,
+              totalPointsEarned: (t.rewards?.totalPointsEarned || 0) + (result.delta || 0),
+            };
+
+            if (blockedBefore) {
+              recordUnblockedCompletion();
+            }
+            if (!hasNotes && !hasAtts && !hasDeps) {
+              recordFocusCompletion();
+            }
+
+            // show toasts if level-up or new badges
+            if (result.leveledUp) {
+              pushToast('info', 'Level Up!', `Great job! You've reached level ${getLevelInfo().level}.`);
+            }
+            if (Array.isArray(result.newBadges) && result.newBadges.length > 0) {
+              result.newBadges.forEach(b => pushToast('info', 'New Badge', `You earned: ${b}`));
+            }
+          }
         } else {
+          // rollback today's completion count if applicable
           if (t.completedAt && isSameLocalDate(new Date(t.completedAt), new Date())) {
             decrementCompleted(t.completedAt);
+          }
+          // rollback gamification history entry for this occurrence (best-effort)
+          if (t.rewards?.lastCompletionOccurrenceId) {
+            rollbackCompletion(t.id, t.rewards.lastCompletionOccurrenceId);
           }
           next.completedAt = null;
           next.archived = false;
@@ -857,5 +956,19 @@ export function useTodos() {
     purgeArchived,
     // PUBLIC_INTERFACE
     purgeAllArchived,
+
+    // Gamification exposure
+    gamification,
+    // PUBLIC_INTERFACE
+    awardPoints: (delta, reason, taskId) => {
+      // simple wrapper for consumers/tests
+      return recordCompletion({ id: taskId, priority: "medium", completedAt: new Date().toISOString() }, { localAction: true, priorityBonus: false, streakBonus: false, dueBonus: false, unblockedBonus: false, timeBlockBonus: false, });
+    },
+    // PUBLIC_INTERFACE
+    getBadgeList,
+    // PUBLIC_INTERFACE
+    getLevelInfo,
+    // PUBLIC_INTERFACE
+    resetGamification,
   };
 }
